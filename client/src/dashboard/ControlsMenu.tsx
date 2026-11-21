@@ -13,6 +13,8 @@ export interface ControlsMenuProps {
   onConnectBle: () => void;
   onConnectSerial: () => void;
   onZero: () => void;
+  /** Why the last Bluetooth / USB connect failed, shown in the panel. */
+  hardwareError?: string | null;
 }
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -163,6 +165,11 @@ export const ControlsMenu: React.FC<ControlsMenuProps> = (p) => {
             </div>
           )}
 
+          {p.hardwareError && !p.imuConnected && (
+            <div style={{ margin: '0 12px 12px 29px', padding: '8px 10px', borderRadius: 6, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: 11.5, lineHeight: 1.4 }}>
+              {p.hardwareError}
+            </div>
+          )}
           <div style={{ ...row, background: '#fafaf8' }}>
             <div style={{ fontSize: 11.5, color: '#575652', lineHeight: 1.45 }}>
               Hold the racket across your body and press <b>Zero</b> (or BtnA). No hardware? <b>Space</b> swings, <b>A / D</b> move your reach.

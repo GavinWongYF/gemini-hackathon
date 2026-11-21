@@ -16,6 +16,7 @@ import { captureCourtJpeg } from './CourtFrameCapture';
 import { PauseDashboard, type PointWinnerRecord } from './PauseDashboard';
 import { SceneSlot } from './SceneSlot';
 import { ControlsMenu } from './ControlsMenu';
+import { CameraTile } from './CameraTile';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -463,11 +464,19 @@ export const LiveMatchView: React.FC = () => {
     hardwareInput.zeroRacket();
   }, []);
 
+  const [hardwareError, setHardwareError] = useState<string | null>(null);
   const handleConnectSerial = useCallback(() => {
-    void hardwareInput.connectSerial();
+    setHardwareError(null);
+    void hardwareInput.connectSerial().then((ok) => {
+      if (!ok) setHardwareError('USB: no M5 found. Plug it in with a data cable, close Arduino Serial Monitor, then try again.');
+    }).catch((e: unknown) => setHardwareError(`USB: ${e instanceof Error ? e.message : String(e)}`));
   }, []);
   const handleConnectBle = useCallback(() => {
-    void hardwareInput.connectBle();
+    setHardwareError(null);
+    void hardwareInput.connectBle().then((r) => {
+      if (!r.ok) setHardwareError(/cancel/i.test(r.error ?? '') ? 'Bluetooth: no device picked. Turn the M5 on (it shows BLE: M5-TENNIS-IMU) and make sure no other laptop is connected to it.' : `Bluetooth: ${r.error}`);
+    });
+    return;
   }, []);
 
   const handleForceStart = useCallback(() => {
@@ -596,6 +605,7 @@ export const LiveMatchView: React.FC = () => {
             onConnectBle={handleConnectBle}
             onConnectSerial={handleConnectSerial}
             onZero={handleZeroRacket}
+            hardwareError={hardwareError}
           />
           {isOfflineNotAdapting ? (
             <span
@@ -742,6 +752,7 @@ export const LiveMatchView: React.FC = () => {
               replayArcs={recentShots}
               onCanvasClick={handleCanvasClick}
             />
+            <CameraTile />
           </div>
 
           {/* Bottom Tabular Kinematics & Policy Telemetry Strip (below court, never over court) */}
