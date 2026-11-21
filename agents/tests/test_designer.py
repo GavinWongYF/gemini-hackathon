@@ -111,7 +111,8 @@ async def test_design_from_model_reply_fits_the_contract():
     design = await D.GeminiDesigner(ask=fake_ask(TENNIS_REPLY, calls)).design(setup, None, lines.append)
 
     names = [spec.name for spec in design.values]
-    assert names[:4] == ["comes_to_net", "favours_forehand", "goes_left", "share_of_side_forehand"]   # the model's, then the code-built one
+    # The model's values here count nothing and name no picture, so they make way for ones built from the setup.
+    assert names[0] == "share_of_side_forehand" and not {"comes_to_net", "favours_forehand", "goes_left"} & set(names)
     assert any("wrote 3 of the questions and 3 practice players" in note for note in design.notes)
     assert {"like_forehand_lover", "like_net_rusher", "like_even"} <= set(names)
     like = next(spec for spec in design.values if spec.name == "like_net_rusher")
@@ -120,8 +121,9 @@ async def test_design_from_model_reply_fits_the_contract():
 
     opponent = design.behaviour["npcs"]["opponent"]["decisions"]
     assert design.behaviour["version"] == 1
-    assert opponent["shot_type"]["lob"] == {"base": 0.25, "when": {"comes_to_net": 0.6}}   # default kept, entry added
-    assert opponent["position"]["left_deep"]["when"] == {"goes_left": 1.0}                  # clipped to 1
+    # comes_to_net and goes_left were dropped (they count nothing and name no picture), so no weight leans on them.
+    assert opponent["shot_type"]["lob"] == {"base": 0.25}
+    assert "goes_left" not in (opponent["position"]["left_deep"].get("when") or {})
     assert check_behaviour(setup, design.behaviour, names, complete=True) == []
 
     assert calls[0]["model"] == D.config.DESIGNER_MODEL and calls[0]["thinking"] == D.config.DESIGNER_THINKING
@@ -134,7 +136,7 @@ async def test_design_never_fails_when_the_model_does():
         setup, lines = load(game), []
         design = await D.GeminiDesigner(ask=failing_ask).design(setup, None, lines.append)
         names = [spec.name for spec in design.values]
-        assert names and all(spec.question["type"] in ("score", "choice") for spec in design.values)
+        assert names and all(spec.question["type"] in ("score", "choice", "noul") for spec in design.values)
         assert check_behaviour(setup, design.behaviour, names, complete=True) == []
         assert any(line["status"] == "error" for line in lines)
         assert any("built in code alone" in note for note in design.notes)
@@ -156,7 +158,8 @@ async def test_playtest_fills_the_matchup_table_and_traces_each_result(monkeypat
 
     players = ["baseliner", "forehand_lover", "net_rusher", "even"]
     options = 3 + 3
-    assert len(game.runs) == len(players) * (options + 1)
+    played = {run[0] if isinstance(run[0], str) else run[0].get("name") for run in game.runs}  # plus any added main-choice player
+    assert set(players) <= played and len(game.runs) == len(played) * (options + 1)
     assert game.runs[0][0] == "baseliner"                       # the game's own scripted player goes by name
     assert [run[0] for run in game.runs[:7]] == ["baseliner"] * 7   # no model needed for these, so they go first
     persona = game.runs[7][0]
@@ -203,9 +206,20 @@ def test_plan_runs_stays_inside_the_caps(monkeypatch):
     assert rounds == 8 and runs * rounds <= 400
 
 
+def prompt_picks(setup):
+    """The picks the designer's prompt allows, from its "written exactly as one of:" line."""
+    line = D._prompt(setup).split("written exactly as one of: ", 1)[1].split("\n", 1)[0]
+    return [pick.strip() for pick in line.rstrip(".").split(", ")]
+
+
+def test_schema_has_no_enum_of_every_pick():
+    schema = json.dumps(D._schema(court()))
+    assert "shot.side=forehand" not in schema  # an enum of every pick made the schema too big to serve
+
+
 def test_schema_names_only_what_the_game_declared():
     schema = D._schema(court())
-    picks = schema["properties"]["personas"]["items"]["properties"]["plays"]["items"]["properties"]["pick"]["enum"]
+    picks = prompt_picks(court())  # listed in the prompt and checked in code, so the schema stays small enough to serve
     assert "shot.side=forehand" in picks and "shot.lands=left_deep" in picks and len(picks) == 2 + 6 + 6
     options = schema["properties"]["weights"]["items"]["properties"]["option"]["enum"]
     assert options == sorted(D.option_ids(court()))
@@ -297,10 +311,10 @@ async def test_practice_mode_waits_for_the_model_while_practice_runs(monkeypatch
     assert seen[0] == 14 and len(seen) == 2                         # both scripted players, all options, before the answer;
     #                                                                 the second call asks for the numbers players lacked
     names = [spec.name for spec in design.values]
-    assert names[:4] == ["comes_to_net", "favours_forehand", "goes_left", "share_of_side_forehand"]
+    assert names[0] == "share_of_side_forehand" and "goes_left" not in names
     assert {"like_net_rusher", "like_even", "like_forehand_lover"} <= set(names)
-    assert set(matchups.players(design.matchups)) == {"net_rusher", "even", "forehand_lover"}   # the model's players were playtested too
-    assert len(game.runs) == 21
+    assert {"net_rusher", "even", "forehand_lover"} <= set(matchups.players(design.matchups))   # the model's players were playtested too
+    assert len(game.runs) >= 21
     assert not any("built in code alone" in note for note in design.notes)
     assert check_behaviour(setup, design.behaviour, names, complete=True) == []
     assert await designer.finish(setup, game, lines.append) is None  # nothing was left behind
@@ -322,7 +336,7 @@ async def test_practice_mode_goes_ahead_alone_only_when_the_cap_passes(monkeypat
 
     full = await designer.finish(setup, game, lines.append)         # the model's design is still there to collect
     assert full is not None
-    assert [spec.name for spec in full.values][:3] == ["comes_to_net", "favours_forehand", "goes_left"]
+    assert [spec.name for spec in full.values][0] == "share_of_side_forehand"
     assert "forehand_lover" in matchups.players(full.matchups) and "net_rusher" in matchups.players(full.matchups)
     assert await designer.finish(setup, game, lines.append) is None
 
@@ -348,13 +362,14 @@ def test_quick_design_needs_no_model_and_skips_what_the_player_did_not_choose():
     setup["practice"] = {"players": {"net_rusher": {"about": "Comes to the net early."}, "even": {"about": "No clear habit."}}}
     design = D.GeminiDesigner(ask=failing_ask).quick(setup)
     names = [spec.name for spec in design.values]
-    assert names == ["share_of_side_forehand", "like_net_rusher", "like_even"]     # never `result` or `other_position`
+    assert names[0] == "share_of_side_forehand" and names[-2:] == ["like_net_rusher", "like_even"]
+    assert not any(spec.counts and spec.counts["field"] in ("result", "other_position") for spec in design.values)
     assert design.values[0].about == "Picks forehand often"                         # a habit in a few plain words
-    assert [spec.about for spec in design.values[1:]] == ["Plays like the net rusher", "Plays like the even"]
+    assert [spec.about for spec in design.values if spec.kind == "likeness"] == ["Plays like the net rusher", "Plays like the even"]
     wordy = {**TENNIS_REPLY, "values": [dict(TENNIS_REPLY["values"][0], about="Comes up to the net very early in nearly every single rally")]}
     assert len(D._values(wordy)[0].about.split()) <= 8
     assert check_behaviour(setup, design.behaviour, names, complete=True) == []
-    picks = D._schema(setup)["properties"]["personas"]["items"]["properties"]["plays"]["items"]["properties"]["pick"]["enum"]
+    picks = prompt_picks(setup)
     assert not any(pick.startswith(("shot.result", "shot.other_position")) for pick in picks)
 
 
@@ -440,14 +455,14 @@ async def test_each_value_says_what_it_counts_and_a_bad_count_is_dropped_but_the
     by_name = {spec.name: spec for spec in design.values}
     assert by_name["comes_to_net"].counts == {"event": "shot", "field": "from", "values": ["left_short", "middle_short", "right_short"]}
     assert by_name["favours_forehand"].counts == {"event": "shot", "field": "side", "values": ["forehand"]}
-    assert "goes_left" in by_name and by_name["goes_left"].counts is None
+    assert "goes_left" not in by_name     # counts nothing and names no picture, so it is dropped
     assert "share_of_side_forehand" not in by_name            # it counts the same thing, so the model's value and label stay
     assert by_name["favours_forehand"].about == "Leans on the forehand"
     assert [spec.name for spec in D.plain_values(setup)] == ["share_of_side_forehand"]
     assert D.plain_values(setup)[0].counts == by_name["favours_forehand"].counts
     assert all(spec.counts is None for spec in design.values if spec.name.startswith(D.LIKE))
     value_item = calls[0]["schema"]["properties"]["values"]["items"]
-    assert "shot.side=forehand" in value_item["properties"]["counts"]["items"]["enum"] and "counts" in value_item["required"]
+    assert "shot.side=forehand" in prompt_picks(setup) and "counts" in value_item["required"]
     assert "- counts:" in calls[0]["prompt"]
 
 
@@ -518,9 +533,9 @@ async def test_every_practice_player_gets_full_numbers_on_every_counted_field():
 
     design = await D.GeminiDesigner(ask=ask).design(setup, None, lambda line: None)
     fields = D.counted_fields(design.values)
-    assert set(fields) == {("shot", "from"), ("shot", "side")} and len(calls) == 2
+    assert {("shot", "from"), ("shot", "side")} <= set(fields) and len(calls) == 2
     personas = {persona["name"]: persona for persona in design.personas}
-    assert set(personas) == {"net_charger", "plain_one", "forehand_lover", "net_rusher", "even"}
+    assert {"net_charger", "plain_one", "forehand_lover", "net_rusher", "even"} <= set(personas)
     for persona in personas.values():                                             # a full distribution on every counted field
         for event, field_name in fields:
             shares = persona["plays"][event][field_name]
@@ -528,11 +543,13 @@ async def test_every_practice_player_gets_full_numbers_on_every_counted_field():
     assert personas["net_charger"]["plays"]["shot"]["side"]["forehand"] == 0.55   # from the second ask
     assert personas["net_charger"]["plays"]["shot"]["from"]["middle_short"] == 0.7   # a field it already had is left alone
     assert personas["forehand_lover"]["plays"]["shot"]["from"]["middle_deep"] == 0.8
-    side = [personas[name]["plays"]["shot"]["side"]["forehand"] for name in ("forehand_lover", "net_charger")]
-    assert personas["plain_one"]["plays"]["shot"]["side"]["forehand"] == round(sum(side) / 2, 3)     # the average of the others
+    # backhand_first is the player added so that backhand is someone's main choice.
+    side = [personas[name]["plays"]["shot"]["side"]["forehand"]
+            for name in ("forehand_lover", "net_charger", "backhand_first") if name in personas]
+    assert personas["plain_one"]["plays"]["shot"]["side"]["forehand"] == round(sum(side) / len(side), 3)     # the average of the others
     asked = calls[1]["schema"]["properties"]["players"]["items"]["properties"]
-    assert asked["name"]["enum"] == ["even", "forehand_lover", "net_charger", "net_rusher", "plain_one"]
-    assert all(pick.startswith(("shot.from=", "shot.side=")) for pick in asked["plays"]["items"]["properties"]["pick"]["enum"])
+    assert {"even", "forehand_lover", "net_charger", "net_rusher", "plain_one"} <= set(asked["name"]["enum"])
+    assert all(pick.startswith(("shot.from=", "shot.side=", "shot.lands=")) for pick in asked["plays"]["items"]["properties"]["pick"]["enum"])
     assert "need numbers for some fields" in calls[1]["prompt"]
     assert any("second ask" in note for note in design.notes)
 
@@ -574,5 +591,6 @@ async def test_the_games_own_numbers_for_a_practice_player_are_used_as_given():
     assert abs(sum(hitter["plays"]["shot"]["from"].values()) - 1) < 0.02          # a field it does not cover is filled as usual
     assert calls[0]["schema"]["properties"]["practice_players"]["items"]["properties"]["name"]["enum"] == ["plain_one"]
     asked = json.loads(calls[1]["prompt"].split("same fields:\n", 1)[1].split("\n\nFor each player", 1)[0])
-    assert next(entry for entry in asked if entry["name"] == "hitter")["fields"].keys() == {"shot.from"}
+    keys = next(entry for entry in asked if entry["name"] == "hitter")["fields"].keys()
+    assert "shot.from" in keys and "shot.side" not in keys
 

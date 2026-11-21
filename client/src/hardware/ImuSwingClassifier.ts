@@ -333,6 +333,8 @@ export class ImuSwingClassifier {
    * motion is vetoed so the player's actual forward swing 150ms later fires cleanly!
    */
   cancelCooldown() {
+    // A swing already in flight is kept; only a finished swing's cooldown is cleared.
+    if (this.state === 'armed') return;
     this.state = 'idle';
     this.cooldownUntilMs = 0;
     this.cooldownMaxUntilMs = 0;
@@ -597,7 +599,9 @@ export class ImuSwingClassifier {
       this.lastSampleMs === null ? 0.01 : clamp((nowMs - this.lastSampleMs) / 1000, 0.002, 0.1);
     this.lastSampleMs = nowMs;
 
-    if (sample.recenter) {
+    // Once calibrated, a zero request that lands while a swing is in flight or has just ended is ignored,
+    // so a grip that brushes the button mid-swing cannot store the swing's motion as the zero pose.
+    if (sample.recenter && (this.phase !== 'ready' || this.state === 'idle')) {
       this.startZeroing();
     }
 

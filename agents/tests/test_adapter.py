@@ -9,6 +9,7 @@ from typing import Any
 
 from server import adapter as A
 from server import config, matchups
+from server import measures as M
 from server.contract import check_behaviour, check_message
 from server.designer import first_behaviour, like_values
 from server.interfaces import Design, MatchState, Matchup, PlayerState, ValueSpec
@@ -25,9 +26,13 @@ import pytest
 def counts_alone(monkeypatch, request):
     """Most tests here check one mechanism on plain counts: no table weight in the fair band, no holding
     updates, and no wait for a won round. Tests marked `as_shipped` run with the settings as they ship."""
+    monkeypatch.setattr(config, "DOSE_SECONDS", 0.0)            # the looks in these tests follow at once, with no clock
     if "as_shipped" in request.keywords:
         return
+    monkeypatch.setattr(config, "PAUSE_LISTS", False)
+    monkeypatch.setattr(config, "MIN_VISIBLE_STEP", 0.0)
     monkeypatch.setattr(config, "FAIR_BLEND_ROUNDS", 0.0)
+    monkeypatch.setattr(config, "FAIR_WINDOW_ROUNDS", 0)      # the band as it was: one count over the whole match
     monkeypatch.setattr(config, "SEND_HOLDING_UPDATES", False)
     monkeypatch.setattr(config, "ADD_ONLY_AFTER_WIN", False)
     monkeypatch.setattr(config, "DOSE_STEP", 0.0)
@@ -804,15 +809,18 @@ async def test_the_timeout_setting_caps_a_standard_call(monkeypatch):
     assert calls[0]["timeout"] == 1.0
 
 
-async def test_a_player_who_does_nothing_is_not_counted_by_the_fairness_check():
+async def test_rounds_lost_with_no_event_from_the_player_count_as_the_scoreboard_has_them():
     match, lines = make_match()
     match.rounds = [round_end(number, "opponent") for number in range(1, 7)]      # six rounds lost, and not one event
     match.design.dials = SPEED_DIAL
     calls: list[dict[str, Any]] = []
     adapter = A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE]), calls=calls))
-    assert A.played(match) == [] and not A.brake(A.played(match))                 # rounds they sat out are not losses
-    assert await adapter.adapt(match, "quick") is None and calls == []            # nothing eases and nothing is asked
-    assert "nothing I can read yet" in lines[-1]["about"]
+    assert len(A.played(match)) == 6 and A.brake(A.played(match))                 # every finished round counts, so the brake trips
+    update = await adapter.adapt(match, "quick")
+    assert calls == []                                                            # no paid look for a player who sent nothing
+    assert update is not None and update["settings"]["opponent_speed"] < 1.0      # and the code eases on its own
+    assert M.how_lost_rounds_end(match.setup, match.rounds, match.events)[0].startswith(
+        "You lost 6 rounds in a row and sent nothing in any of them")
 
 
 def test_the_real_practice_table_marks_the_unbeatable_option_general():
@@ -1115,7 +1123,7 @@ async def test_every_look_sends_an_update_and_a_blocked_one_is_a_holding_update(
     update = await A.GeminiAdapter(writers={"standard": Quiet()}).adapt(match, "quick")
     assert update["changes"] == [] and update["version"] == match.behaviour["version"] + 1
     assert update["behaviour"] == {**match.behaviour, "version": update["version"]}             # the play in hand, unchanged
-    assert update["plan"][0] == "You lost the last round, so I am holding."
+    assert update["plan"][0] == "You won 1 of the last 2, so I am holding."           # inside the band: the share, in plain words
     assert 2 <= len(update["observations"]) <= 3 and check_message(match.setup, update) == []
     assert all(len(line.split()) <= config.MAX_LINE_WORDS for line in update["observations"] + update["plan"])
 
@@ -1254,11 +1262,11 @@ async def test_only_a_look_where_a_writer_answered_sends_a_holding_update_and_ne
     first = await adapter.adapt(match, "quick")
     assert first["changes"] == [] and "holding" in first["plan"][0]              # the writer answered and had nothing
     assert await adapter.adapt(match, "quick") is None                            # the same instant: no second update
-    assert "a moment ago" in lines[-1]["about"]
+    assert "so I am holding" in lines[-1]["about"] or "Nothing new from you" in lines[-1]["about"]
 
 
 @pytest.mark.as_shipped
-async def test_a_writer_never_makes_the_opponent_weaker_inside_the_band():
+async def test_a_writer_never_makes_the_opponent_weaker():
     class Soft:
         name = "standard"
 
@@ -1267,13 +1275,12 @@ async def test_a_writer_never_makes_the_opponent_weaker_inside_the_band():
             behaviour["npcs"]["opponent"]["decisions"]["shot_type"]["lob"] = {"base": 0.25}    # back to the default: easier
             return {"behaviour": behaviour, "observations": [], "plan": ["I will ease off."], "changes": []}
 
-    match, lines = make_match(["player", "opponent", "player"])
+    match, lines = make_match(["player", "player", "opponent", "player", "player"])           # above the band, so the writer is asked
     match.behaviour["npcs"]["opponent"]["decisions"]["shot_type"]["lob"] = {"base": 1.0}       # a counter is in play
     assert A.struggling(match.rounds, 0.5) is None
     update = await A.GeminiAdapter(writers={"standard": Soft()}).adapt(match, "quick")
-    assert update["changes"] == [] and "holding" in update["plan"][0]
-    assert update["behaviour"]["npcs"]["opponent"]["decisions"]["shot_type"]["lob"] == {"base": 1.0}
-    assert any("make me easier" in line["about"] for line in lines)
+    assert any("make me easier" in line["about"] for line in lines)               # the writer's ease is refused
+    assert update["behaviour"]["npcs"]["opponent"]["decisions"]["shot_type"]["lob"]["base"] >= 1.0   # and nothing got weaker
 
 
 def test_the_step_cap_grows_with_the_gap(monkeypatch):
@@ -1322,26 +1329,17 @@ async def test_far_above_the_band_the_dial_moves_beside_what_the_writer_added():
     assert check_message(match.setup, update) == []
 
 
-async def test_rounds_the_player_sat_out_change_nothing():
-    class Never:
-        name = "standard"
-
-        async def write(self, facts, budget_seconds, trace):
-            return None
-
-    match, _ = make_match(["player", "opponent", "player", "opponent"])
-    match.design.dials = SPEED_DIAL
-    newer, older = two_rules(match)
-    before, share = copy.deepcopy(match.behaviour), A.blended_share(A.played(match), 0.6)
-    for number in range(5, 15):                                                   # ten rounds with no event from the player
-        match.rounds.append(round_end(number, "opponent"))
-    assert len(A.played(match)) == 4 and A.blended_share(A.played(match), 0.6) == share
-    assert not A.brake(A.played(match)) and A.struggling(A.played(match), 0.6) is None
-    adapter = A.GeminiAdapter(writers={"standard": Never()})
-    for _ in range(3):
-        update = await adapter.adapt(match, "quick")
-        assert update is None or (update["changes"] == [] and "settings" not in update)
-    assert match.behaviour == before
+async def test_the_writer_is_not_asked_again_until_the_player_does_something_new():
+    match, lines = make_match(["player", "player", "opponent", "player"])
+    calls: list[dict[str, Any]] = []
+    adapter = A.GeminiAdapter(ask=fake_ask(reply(), calls=calls))
+    await adapter.adapt(match, "quick")
+    assert len(calls) == 1
+    await adapter.adapt(match, "quick")                                           # no player event since that call started
+    assert len(calls) == 1 and "Nothing new from you since my last look" in lines[-1]["about"]
+    add_round(match, 5, "player")                                                 # the player plays on
+    await adapter.adapt(match, "quick")
+    assert len(calls) == 2
 
 
 async def test_two_eases_never_go_out_with_fewer_than_two_played_rounds_between_them(monkeypatch):
@@ -1356,9 +1354,7 @@ async def test_two_eases_never_go_out_with_fewer_than_two_played_rounds_between_
     assert await adapter.adapt(match, "quick") is None                            # no played round since
     add_round(match, 5, "opponent")
     assert await adapter.adapt(match, "quick") is None                            # one played round since: still waiting
-    match.rounds.append(round_end(6, "opponent"))                                 # a round the player sat out does not count
-    assert await adapter.adapt(match, "quick") is None
-    add_round(match, 7, "opponent")
+    match.rounds.append(round_end(6, "opponent"))                                 # no event from the player in it: it counts all the same
     second = await adapter.adapt(match, "quick")
     assert second is not None and second["writer"] == "fairness"                  # two played rounds since: the next ease
 
@@ -1376,6 +1372,7 @@ async def test_a_step_held_after_a_lost_round_goes_out_after_the_next_win_with_n
     add_round(match, 5, "player")
     out = await adapter.adapt(match, "quick")
     assert out["changes"] and len(calls) == 1 and not adapter.waiting(match.match_id)   # the kept step, with no second call
+    assert out["kept"] is True and all({"value", "count", "of"} <= set(line) for line in out["seen"] if "event" in line)
     assert not any("holding" in line for line in out["plan"])
 
     match, _ = make_match(["player", "player", "player", "opponent"])             # a kept step does not live for ever
@@ -1385,7 +1382,7 @@ async def test_a_step_held_after_a_lost_round_goes_out_after_the_next_win_with_n
         add_round(match, number, "opponent")
     assert len(calls) == 2
     await adapter.adapt(match, "quick")
-    assert len(calls) == 3                                                        # three played rounds on: it expired, so the writer is asked afresh
+    assert len(calls) == 2 and not adapter.waiting(match.match_id)                # back inside a fair share: the kept step is dropped, nobody is asked
 
 
 async def test_the_writer_is_told_how_the_player_wins_rounds():
@@ -1408,10 +1405,10 @@ async def test_the_writer_is_told_how_the_player_wins_rounds():
 async def test_a_line_that_cites_the_score_is_true_when_it_is_sent():
     match, _ = make_match(["opponent", "opponent"])
     assert A.score_holds("I will ease off since you won 0 of 2 rounds.", match)
-    for number, winner in ((3, "player"), (4, "player"), (5, "opponent")):        # rounds end while the writer works
+    for number, winner in ((3, "player"), (4, "player"), (5, "player")):          # rounds end while the writer works
         add_round(match, number, winner)
-    assert not A.score_holds("I will ease off since you won 0 of 2 rounds.", match)     # 2 of 5 by now, 1 of the last 2
-    assert A.score_holds("You won 2 of 5 rounds so far.", match) and A.score_holds("You lost 1 of the last 2 rounds.", match)
+    assert not A.score_holds("I will ease off since you won 0 of 2 rounds.", match)     # 3 of 5 by now, 2 of the last 2
+    assert A.score_holds("You won 3 of 5 rounds so far.", match) and A.score_holds("You lost 2 of the last 5 rounds.", match)
     assert A.score_holds("Your forehand won 21 of 29 times.", match)             # not a count of rounds: left alone
 
     class Stale:
@@ -1426,3 +1423,155 @@ async def test_a_line_that_cites_the_score_is_true_when_it_is_sent():
     update = await A.GeminiAdapter(writers={"standard": Stale()}).adapt(match, "quick")
     assert update is not None and not any("0 of 2" in line for line in update["observations"] + update["plan"])
 
+
+
+def test_the_step_is_sized_by_the_seconds_since_the_last_one_that_added_strength(monkeypatch):
+    monkeypatch.setattr(config, "DOSE_MAX_STEP", 0.15)
+    monkeypatch.setattr(config, "DOSE_SECONDS", 10.0)
+    monkeypatch.setattr(config, "DOSE_MIN_STEP", 0.05)
+    assert A.step_cap(0.5, None) == 0.15                                          # the first landing gets the whole cap
+    assert A.step_cap(0.5, 5.0) == pytest.approx(0.075)                           # half the time, half the step
+    assert A.step_cap(0.5, 1.0) == 0.05                                           # never under the smallest step
+    assert A.step_cap(0.5, 60.0) == 0.15                                          # never over the cap
+
+
+def test_a_look_written_against_an_older_play_is_set_on_the_play_in_hand():
+    match, _ = make_match(["player", "player"])
+    written = copy.deepcopy(match.behaviour)
+    npc = next(iter(written["npcs"]))
+    decision = next(iter(written["npcs"][npc]["decisions"]))
+    first, second = list(written["npcs"][npc]["decisions"][decision])[:2]
+    proposed = copy.deepcopy(written)
+    proposed["npcs"][npc]["decisions"][decision][first] = {"base": 0.9}
+    in_play = copy.deepcopy(written)                                              # another look landed in between
+    in_play["version"] = int(written.get("version", 0) or 0) + 1
+    in_play["npcs"][npc]["decisions"][decision][second] = {"base": 0.7}
+    landed = A.onto_play(written, proposed, in_play)
+    assert landed["npcs"][npc]["decisions"][decision][first] == {"base": 0.9}     # what this look asked for is set
+    assert landed["npcs"][npc]["decisions"][decision][second] == {"base": 0.7}    # and the newer play is kept
+    assert A.onto_play(written, proposed, landed) == landed                       # the same conclusion twice adds nothing
+
+
+@pytest.mark.as_shipped
+async def test_a_real_update_has_short_counted_lists_and_a_holding_update_says_so(monkeypatch):
+    monkeypatch.setattr(config, "MIN_UPDATE_GAP_SECONDS", 0.0)
+    match, _ = make_match(["player", "player", "opponent", "player"])
+    update = await A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE]))).adapt(match, "quick")
+    if update is not None and update["changes"]:
+        assert "holding" not in update and 1 <= len(update["observations"]) <= 3 and len(update["plan"]) <= 3
+        assert all(len(line.split()) <= 10 and any(char.isdigit() for char in line) for line in update["observations"])
+        assert all(len(line.split()) <= 8 for line in update["plan"])
+    quiet, _ = make_match(["player", "opponent"], table=False)
+    held = await A.GeminiAdapter(ask=fake_ask(reply())).adapt(quiet, "quick")
+    assert held is not None and held["holding"] is True and held["changes"] == []
+    assert check_message(quiet.setup, held) == []
+
+
+async def test_the_dial_goes_second_beside_a_change_of_play_and_a_switch_keeps_it_out(monkeypatch):
+    match, _ = make_match(["player"] * 6)
+    match.design.dials = SPEED_DIAL
+    update = await A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE]))).adapt(match, "quick")
+    wheres = [change["where"] for change in update["changes"]]
+    assert wheres.index("settings.opponent_speed") > wheres.index("opponent.rules")   # the change of play first, the dial second
+    monkeypatch.setattr(config, "FAIR_DIAL_JOINS", False)
+    match, _ = make_match(["player"] * 6)
+    match.design.dials = SPEED_DIAL
+    update = await A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE]))).adapt(match, "quick")
+    assert update is not None and "settings" not in update                            # switched off: the dial never joins
+
+
+@pytest.mark.as_shipped
+async def test_the_last_eight_rounds_decide_and_an_ease_takes_the_latest_step_back(monkeypatch):
+    monkeypatch.setattr(config, "MIN_UPDATE_GAP_SECONDS", 0.0)
+    assert A.blended_share([round_end(number, "player") for number in (1, 2)], 0.5) == pytest.approx((2 + 0.5 * 6) / 8)
+    match, lines = make_match(["player", "player", "player"])
+    calls: list[dict[str, Any]] = []
+    adapter = A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE]), calls=calls))
+    first = await adapter.adapt(match, "quick")
+    assert first["changes"] and "holding" not in first and len(calls) == 1          # above 60% of the window: a real step
+    assert [line["text"] for line in first["seen"]] == first["observations"]
+    assert [line["text"] for line in first["changing"]] == first["plan"] and all("where" in line for line in first["changing"])
+    assert "won" not in first["observations"][0].split()[:3] and check_message(match.setup, first) == []
+    keep(match, first)
+    add_round(match, 4, "player")
+    more = await adapter.adapt(match, "quick")                                       # one round since: the last step has no proof yet
+    assert more is None or more["changes"] == []
+    assert adapter.waiting(match.match_id)                                           # the next step is kept ready meanwhile
+    for number in (5, 6, 7, 8):
+        add_round(match, number, "opponent")
+    asked = len(calls)
+    eased = await adapter.adapt(match, "quick")                                      # 1 of the 5 rounds since the step: it was too much
+    assert eased["writer"] == "fairness" and len(calls) == asked                     # in code, with no model call
+    assert eased["plan"][0].startswith("That was too much, I am backing off") and not adapter.waiting(match.match_id)
+    assert eased["behaviour"]["npcs"]["opponent"]["rules"] == [] and check_message(match.setup, eased) == []
+
+
+def test_a_setting_moves_with_a_reason_said_by_the_opponent_as_a_percent():
+    up = {"setting": "opponent_speed", "easier": False, "won": 9, "counted": 12}
+    assert A.dial_reason(up) == "I raise opponent speed a step, because you win 75% of rounds."
+    assert A.dial_reason({**up, "easier": True, "won": 3, "counted": 10}) == "I lower opponent speed a step, because you win only 30% of rounds."
+
+
+@pytest.mark.as_shipped
+async def test_the_first_real_update_goes_out_at_an_even_share_and_later_ones_need_the_high_mark(monkeypatch):
+    monkeypatch.setattr(config, "MIN_UPDATE_GAP_SECONDS", 0.0)
+    match, _ = make_match(["opponent", "player"], table=False)                       # 1 of 2: the window reads one half
+    assert A.winning(match.rounds, None) is None and A.first_step_due(match, [], None)
+    adapter = A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE])))
+    first = await adapter.adapt(match, "quick")
+    assert first["changes"] and "holding" not in first                               # the first step does not wait for luck
+    keep(match, first)
+    for number, winner in ((3, "opponent"), (4, "player"), (5, "opponent"), (6, "player")):
+        add_round(match, number, winner)
+    later = await adapter.adapt(match, "quick")                                      # 3 of 6: inside the band, so it holds
+    assert later is None or later["changes"] == []
+
+
+@pytest.mark.as_shipped
+async def test_on_an_ease_the_dial_goes_home_before_any_choice_of_play_is_taken_back(monkeypatch):
+    monkeypatch.setattr(config, "MIN_UPDATE_GAP_SECONDS", 0.0)
+    match, _ = make_match(["player"] * 6)
+    match.design.dials = SPEED_DIAL
+    calls: list[dict[str, Any]] = []
+    adapter = A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE]), calls=calls))
+    first = await adapter.adapt(match, "quick")
+    assert first["settings"] == {"opponent_speed": 0.94}                             # far above: the dial joined the step
+    keep(match, first)
+    play = copy.deepcopy(match.behaviour["npcs"])
+    for number in (7, 8, 9, 10):
+        add_round(match, number, "opponent")
+    back = await adapter.adapt(match, "quick")
+    assert back["writer"] == "fairness" and back["settings"] == {"opponent_speed": 0.85} and len(calls) == 1
+    assert [change["where"] for change in back["changes"]] == ["settings.opponent_speed"]
+    assert back["plan"][0].startswith("I lower opponent speed a step, because you win only")
+    assert back["plan"][1] == "It is back where we began." and "I keep watching how you play." not in back["plan"]
+    for line in back["seen"]:                                                        # only a real count of rounds is tagged as one
+        assert (line.get("field") == "round_end") == ("event" not in line) and ("round" in line["text"] or "event" in line)
+    assert len({line["value"] for line in back["seen"] if "value" in line}) == len([line for line in back["seen"] if "value" in line])
+    assert back["behaviour"]["npcs"] == play and check_message(match.setup, back) == []      # the play is untouched so far
+    keep(match, back)
+    for number in (11, 12):
+        add_round(match, number, "opponent")
+    eased = await adapter.adapt(match, "quick")                                      # the dial is home: now the play eases
+    assert eased["writer"] == "fairness" and "settings" not in eased and eased["behaviour"]["npcs"] != play
+    assert eased["plan"][0].startswith("That was too much, I am backing off") and eased["plan"][1].startswith("You win only ")
+    assert "%" in eased["plan"][1] and eased["plan"] != back["plan"] and check_message(match.setup, eased) == []
+
+
+def test_a_plan_line_is_tagged_with_the_change_it_speaks_for_or_not_at_all():
+    changes = [{"where": "opponent.shot_type.slice", "from": {"base": 0.2}, "to": {"base": 0.5}, "why": "You hit topspin on 8 of 10."},
+               {"where": "opponent.aim.right_short", "from": {"base": 0.2}, "to": {"base": 0.5}, "why": "You stay deep."},
+               {"where": "settings.opponent_speed", "from": 0.85, "to": 0.94, "why": "I raise opponent speed a step."}]
+    assert A.paired("I will pull you short to the right.", changes) == "opponent.aim.right_short"
+    assert A.paired("I will use more low slice shots.", changes) == "opponent.shot_type.slice"
+    assert A.paired("I raise opponent speed a step.", changes) == "settings.opponent_speed"
+    assert A.paired("I will make this harder for you.", changes) is None             # not sure, so no tag at all
+    assert A.paired("Anything at all.", changes[:1]) == "opponent.shot_type.slice"   # one change: every line is about it
+
+
+def test_each_ease_of_a_setting_says_what_is_different_this_time():
+    step = {"setting": "opponent_speed", "easier": True, "won": 2, "counted": 8, "from": 0.76, "to": 0.67, "start": 0.85}
+    assert A.dial_reason({**step, "again": True}) == "I lower opponent speed again, because you win only 25% of rounds."
+    assert A.dial_place(step) == "It is 2 steps under where we began."
+    assert A.dial_place({**step, "from": 0.94, "to": 0.85}) == "It is back where we began."
+    assert A.dial_place({**step, "from": 0.67, "to": 0.65, "limit": True}) == "That is as low as it goes."

@@ -28,7 +28,8 @@ _COUNT_PRIOR = 2.0
 MIN_EVENTS = 3
 
 # Only the latest events of a match count, so a player who changes is followed.
-_COUNT_LAST = 40
+# 20 rather than 40, so each new event moves a counted value visibly in a rally.
+_COUNT_LAST = 20
 
 # Persona likeness weighs the counts as at most this many events.
 _LIKENESS_EVENTS = 12
@@ -46,6 +47,9 @@ class Target:
     options: list[str]   # the options that make up the share
     all_options: list[str]
     events: list[str] | None = None  # other events with the same field, when the value names no event
+    mean: bool = False   # a level: the mean of a number field, scaled by its range, in place of a share
+    low: float = 0.0
+    high: float = 1.0
 
 
 def _words(text: str) -> set[str]:
@@ -86,6 +90,13 @@ def target_for(setup: Message, spec: ValueSpec) -> Target | None:
     from. Anything else keeps the model's read.
     """
     counts = getattr(spec, "counts", None)
+    if isinstance(counts, dict) and counts.get("mean"):
+        event, field_name = str(counts.get("event") or ""), str(counts.get("field") or "")
+        kind = (((setup.get("events") or {}).get(event) or {}).get("fields") or {}).get(field_name)
+        if isinstance(kind, dict) and isinstance(kind.get("min"), (int, float)) and isinstance(kind.get("max"), (int, float)) \
+                and kind["max"] > kind["min"]:
+            return Target(event, field_name, [], [], mean=True, low=float(kind["min"]), high=float(kind["max"]))
+        return None
     if isinstance(counts, dict):
         event, field_name = str(counts.get("event") or ""), str(counts.get("field") or "")
         options, _ = _field_options(setup, event, field_name)
@@ -129,12 +140,21 @@ def resolve(target: Target, events: list[Message]) -> Target:
 
 
 def counted_share(events: list[Message], target: Target) -> tuple[float, int, int]:
-    """(share, uses, events counted) over the player's latest events of the target's kind."""
+    """(share, uses, events counted) over the player's latest events of the target's kind.
+
+    For a level, the share is the mean of the number scaled 0 to 1 by its range.
+    """
     values = [
         (e.get("data") or {}).get(target.field)
         for e in events
         if e.get("by") == "player" and e.get("name") == target.event
     ]
+    if target.mean:
+        numbers = [float(v) for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)][-_COUNT_LAST:]
+        if not numbers:
+            return 0.0, 0, 0
+        level = (sum(numbers) / len(numbers) - target.low) / (target.high - target.low)
+        return min(max(level, 0.0), 1.0), len(numbers), len(numbers)
     values = [str(v) for v in values if v is not None][-_COUNT_LAST:]
     if not values:
         return 0.0, 0, 0
@@ -153,6 +173,11 @@ def next_action_question(target: Target) -> dict[str, Any]:
     "Does the player play X?" is true after one X, so its probability is not
     a share. "What will the next one be?" is.
     """
+    if target.mean:
+        middle = (target.low + target.high) / 2
+        return {"type": "noul", "instructions": (
+            f"Will the player's next `{target.event}` have `{target.field}` above {middle:g}? "
+            f"Judge by the player's `{target.field}` numbers so far and by the latest frames.")}
     return {
         "type": "choice",
         "instructions": (
@@ -165,6 +190,9 @@ def next_action_question(target: Target) -> dict[str, Any]:
 
 def share_from_answer(target: Target, answer: dict[str, Any]) -> tuple[float, float]:
     """(share, confidence) from the next-action choice: the probability of the target's options."""
+    if target.mean:
+        yes = float(answer.get("noul", answer.get("confidence", 0.0)))
+        return min(max(yes, 0.0), 1.0), min(max(float(answer.get("confidence", 0.0)), 0.0), 1.0)
     probabilities = {str(k): float(p) for k, p in (answer.get("probabilities") or {}).items()}
     share = sum(probabilities.get(o, 0.0) for o in target.options)
     return min(max(share, 0.0), 1.0), min(max(float(answer.get("confidence", 0.0)), 0.0), 1.0)

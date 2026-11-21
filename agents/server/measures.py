@@ -243,13 +243,63 @@ def summary(setup: Message, events: list[Message], rounds: list[Message]) -> dic
 
 
 def rounds_played(rounds: list[Message], events: list[Message]) -> list[Message]:
-    """The finished rounds the player took part in: those with at least one event the player sent.
+    """The finished rounds that count for fairness: every one, exactly as the scoreboard has it.
 
-    A round the player sat out says nothing about how the match is going
-    for them, so every fairness count reads this list and not all rounds.
+    A round with no event from the player is usually a real loss (the player
+    never got to answer), so it counts like any other. This is the one place
+    that says which rounds count, and every fairness count reads it.
     """
+    return list(rounds)
+
+
+def quiet_rounds(rounds: list[Message], events: list[Message]) -> int:
+    """How many of the latest finished rounds in a row had no event from the player."""
     took_part = {event.get("round") for event in events if event.get("by") == "player"}
-    return [round_end for round_end in rounds if round_end.get("round") in took_part]
+    count = 0
+    for round_end in reversed(rounds):
+        if round_end.get("round") in took_part:
+            break
+        count += 1
+    return count
+
+
+def how_lost_rounds_end(setup: Message, rounds: list[Message], events: list[Message], minimum: int = 3) -> list[str]:
+    """How the player's latest lost rounds ended when they sent nothing in them, in the game's own names.
+
+    A run of lost rounds with no event from the player is the plainest sign
+    the other side has gone too far. The second line says what the last event
+    from the other side had in common in those rounds. Nothing here knows the game.
+    """
+    quiet = quiet_rounds(rounds, events)
+    latest = rounds[len(rounds) - quiet:] if quiet else []
+    lost = [round_end for round_end in latest if round_end.get("winner") not in (None, "player")]
+    if quiet < minimum or len(lost) != quiet:
+        return []
+    ways: dict[str, int] = {}
+    for round_end in lost:
+        if round_end.get("how"):
+            ways[str(round_end["how"])] = ways.get(str(round_end["how"]), 0) + 1
+    line = f"You lost {quiet} rounds in a row and sent nothing in any of them"
+    if ways:
+        how, count = max(ways.items(), key=lambda item: item[1])
+        line += f": {'each' if count == quiet else f'{count} of them'} ended {how}"
+    lines = [line + "."]
+    those = {round_end.get("round") for round_end in lost}
+    last: dict[Any, Message] = {}
+    for event in events:  # in time order, so the last one of each round stays
+        if event.get("by") != "player" and event.get("round") in those:
+            last[event.get("round")] = event
+    seen: dict[tuple[str, str, str, str], int] = {}
+    for event in last.values():
+        for field_name, value in (event.get("data") or {}).items():
+            if _options(setup, str(event.get("name")), field_name) and field_name not in config.OUTCOME_FIELDS \
+                    and not is_guess(field_name):
+                key = (str(event.get("by")), str(event.get("name")), field_name, str(value))
+                seen[key] = seen.get(key, 0) + 1
+    common = [(hits, key) for key, hits in seen.items() if hits >= max(minimum, (len(last) + 1) // 2)]
+    for hits, (by, event_name, field_name, value) in sorted(common, reverse=True)[:1]:
+        lines.append(f"The last {event_name} from {by} in those rounds had {field_name} {value} in {hits}.")
+    return lines
 
 
 def how_won_rounds_end(setup: Message, rounds: list[Message], events: list[Message], minimum: int = 3) -> list[str]:

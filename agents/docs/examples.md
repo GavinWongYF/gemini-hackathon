@@ -446,7 +446,7 @@ The end of a point. `how` is one of `out`, `net`, `not_reached` or `timeout`. `b
 
 ### What comes back
 
-`ready`, once, before the first point. By default the match starts on the game's own `default_behaviour`, unchanged. This example shows the designed behaviour instead, the game's default with `when` entries added, which is what `ready` carries when `NPC_START_ON_GAME_DEFAULT` is 0:
+`ready`, once, before the first point. By default the match starts on the game's own `default_behaviour`, unchanged. This example shows the designed behaviour instead, the game's default with `when` entries added, which is what `ready` carries when `NPC_START_ON_GAME_DEFAULT` is 0. Each value also carries its `kind`, and the `event` and `field` it counts when it counts one. They are left out here to keep the example short. [api.md](api.md#what-each-value-is) explains them:
 
 ```json
 {
@@ -521,7 +521,7 @@ The goal says to start beatable, so this opponent eases off the player's weak si
 }
 ```
 
-`strategy_update`, during the match. The game swaps it in before the next serve:
+`strategy_update`, during the match. The game swaps it in before the next serve. A real update like this one also carries `seen` and `changing`, the same lines with what each is about, and is kept to 3 short lines in each list. [api.md](api.md#a-real-update-and-what-a-game-can-do-with-it) explains when one is sent:
 
 ```json
 {

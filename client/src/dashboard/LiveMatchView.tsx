@@ -6,23 +6,27 @@
 //       3. Right rail:    `<npc-panel side="right" />` (Gemini 4 Neon long-loop strategy adaptation)
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { ArmZone, MatchRenderState, RecordedShot, StrategyVisualCue } from '@shared/contracts';
+import type { ArmZone, MatchRenderState, RecordedShot, StrategyVisualCue, StrokeWing } from '@shared/contracts';
 import { TENNIS_MATCH_PLAN, TENNIS_SETTINGS_BOUNDS } from '@shared/agentProtocol';
-import { hardwareInput } from '../hardware/HardwareInputManager';
+import { hardwareInput, type BleLinkStatus, type RacketLinkKind } from '../hardware/HardwareInputManager';
 import { AgentClient, type AgentConnectionStatus } from '../ai/AgentClient';
 import { OpponentBrain } from '../ai/OpponentBrain';
 import { TennisMatchEngine, createInitialMatchRenderState } from '../engine/TennisMatchEngine';
 import { captureCourtJpeg } from './CourtFrameCapture';
 import { PauseDashboard, type PointWinnerRecord } from './PauseDashboard';
-import { PlayerCamPreview } from './PlayerCamPreview';
 import { SceneSlot } from './SceneSlot';
+import { WebcamHudPip } from './WebcamHudPip';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace JSX {
     interface IntrinsicElements {
       'npc-panel': React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & { side?: 'left' | 'right' },
+        React.HTMLAttributes<HTMLElement> & {
+          side?: 'left' | 'right';
+          match?: string;
+          paused?: string | boolean;
+        },
         HTMLElement
       >;
     }
@@ -35,6 +39,14 @@ interface SwingTelemetrySnapshot {
   power: number;
   rotation: number;
   confidence: number;
+}
+
+interface ShotCalloutBadge {
+  id: number;
+  title: string;
+  subtitle: string;
+  color: string;
+  missed?: boolean;
 }
 
 interface OpponentShotSnapshot {
@@ -108,7 +120,17 @@ export const LiveMatchView: React.FC = () => {
   const engineRef = useRef<TennisMatchEngine | null>(null);
   const agentRef = useRef<AgentClient | null>(null);
   const brainRef = useRef<OpponentBrain | null>(null);
+  const leftPanelRef = useRef<HTMLElement | null>(null);
+  const rightPanelRef = useRef<HTMLElement | null>(null);
   const matchEpochRef = useRef(0);
+  const calloutTimerRef = useRef<number | null>(null);
+  const swingFlashTimerRef = useRef<number | null>(null);
+  const calloutSeqRef = useRef(0);
+  // Section 19.3: Track player shots since previous pause + point outcome (won=green, lost=red)
+  const shotsSincePauseRef = useRef<Array<{ shot: RecordedShot; round: number }>>([]);
+  const roundWinnersRef = useRef<Map<number, 'player' | 'opponent'>>(new Map());
+  const seenShotIdsRef = useRef<Set<string>>(new Set());
+  const prevPhaseRef = useRef<MatchRenderState['phase']>('ready');
 
   const [phase, setPhase] = useState<MatchRenderState['phase']>('ready');
   const [score, setScore] = useState<MatchRenderState['score']>(matchStateRef.current.score);
@@ -121,17 +143,28 @@ export const LiveMatchView: React.FC = () => {
   const [visualCue, setVisualCue] = useState<StrategyVisualCue>('balanced');
 
   const [recentShots, setRecentShots] = useState<RecordedShot[]>([]);
+  // The latest shots are read through a ref so `buildColoredPauseArcs` keeps one identity.
+  // With `recentShots` in its deps, every recorded shot re-ran the match effect and restarted the match.
+  const recentShotsRef = useRef<RecordedShot[]>([]);
+  recentShotsRef.current = recentShots;
+  const [pauseColoredArcs, setPauseColoredArcs] = useState<RecordedShot[]>([]);
   const [pointWinners, setPointWinners] = useState<PointWinnerRecord[]>([]);
   const [rallyShotCount, setRallyShotCount] = useState<number>(0);
 
   const [imuConnected, setImuConnected] = useState(false);
   const [imuHz, setImuHz] = useState(0);
   const [imuCalibrated, setImuCalibrated] = useState(false);
+  const [imuLink, setImuLink] = useState<BleLinkStatus>('idle');
+  const [imuLinkError, setImuLinkError] = useState<string | null>(null);
+  const [imuLinkKind, setImuLinkKind] = useState<RacketLinkKind | 'relay'>('none');
   const [webcamActive, setWebcamActive] = useState(false);
   const [webcamStatus, setWebcamStatus] = useState<'idle' | 'loading' | 'running' | 'error'>('idle');
   const [armZone, setArmZone] = useState<ArmZone>('center');
+  const [armWing, setArmWing] = useState<StrokeWing>('forehand');
+  const [swingFlashActive, setSwingFlashActive] = useState(false);
   const [strikeWindowLive, setStrikeWindowLive] = useState(false);
   const [lastSwing, setLastSwing] = useState<SwingTelemetrySnapshot | null>(null);
+  const [shotCallout, setShotCallout] = useState<ShotCalloutBadge | null>(null);
   const [lastAiShot, setLastAiShot] = useState<OpponentShotSnapshot | null>(null);
   const [shotMix, setShotMix] = useState<{ topspin: number; slice: number; dropshot: number; fh: number; total: number }>({
     topspin: 0,
@@ -143,6 +176,34 @@ export const LiveMatchView: React.FC = () => {
   const [showSidePanels, setShowSidePanels] = useState(true);
   const [showPausedArcs, setShowPausedArcs] = useState(true);
 
+  const showTimedCallout = useCallback((badge: Omit<ShotCalloutBadge, 'id'>) => {
+    const id = ++calloutSeqRef.current;
+    setShotCallout({ ...badge, id });
+    if (calloutTimerRef.current !== null) {
+      window.clearTimeout(calloutTimerRef.current);
+    }
+    calloutTimerRef.current = window.setTimeout(() => {
+      calloutTimerRef.current = null;
+      setShotCallout((cur) => (cur && cur.id === id ? null : cur));
+    }, 1250);
+  }, []);
+
+  const buildColoredPauseArcs = useCallback((): RecordedShot[] => {
+    // Section 19.3: Player shots since previous pause colored GREEN (point won) vs RED (point lost)
+    // Uses Akhil's untouched TennisBallAndTrajectories SHOT_ARC_COLORS (`dropshot`=#22c55e, `volley`=#f43f5e)
+    const entries = shotsSincePauseRef.current;
+    if (entries.length === 0) return recentShotsRef.current;
+    return entries.map(({ shot, round }) => {
+      const winner = roundWinnersRef.current.get(round);
+      const wonPoint = winner === 'player' || (winner === undefined && shot.outcome !== 'net' && shot.outcome !== 'out');
+      return {
+        ...shot,
+        actor: 'human' as const,
+        shotType: wonPoint ? 'dropshot' : 'volley',
+      };
+    });
+  }, []);
+
   const handleRestart = useCallback(() => {
     const engine = engineRef.current;
     const agent = agentRef.current;
@@ -153,10 +214,15 @@ export const LiveMatchView: React.FC = () => {
     brain.resetToBaseline();
     engine.resetToReady();
     engine.syncToRenderState(matchStateRef.current);
+    shotsSincePauseRef.current = [];
+    roundWinnersRef.current.clear();
+    seenShotIdsRef.current.clear();
     setRecentShots([]);
+    setPauseColoredArcs([]);
     setPointWinners([]);
     setRallyShotCount(0);
     setLastSwing(null);
+    setShotCallout(null);
     setLastAiShot(null);
     setShotMix({ topspin: 0, slice: 0, dropshot: 0, fh: 0, total: 0 });
     setShowPausedArcs(true);
@@ -228,6 +294,11 @@ export const LiveMatchView: React.FC = () => {
         },
         onStrategyUpdate: (msg) => {
           brain.queueStrategyUpdate(msg);
+          // Section 19.1: Automatically pause after the current point finishes whenever Neon
+          // sends a real strategy update (`changes.length > 0`) so the audience can read it!
+          if (Array.isArray(msg.changes) && msg.changes.length > 0) {
+            engineRef.current?.requestPauseAfterPoint();
+          }
         },
       },
     });
@@ -248,8 +319,16 @@ export const LiveMatchView: React.FC = () => {
               byRule: Array.isArray(evt.by_rule) && evt.by_rule.length > 0,
             });
           } else if (evt.name === 'shot' && evt.by === 'player') {
-            const st = evt.data.shot_type;
-            const sd = evt.data.side;
+            const st = String(evt.data.shot_type ?? 'topspin');
+            const sd = String(evt.data.side ?? 'forehand');
+            const pwrPct = Math.round(Number(evt.data.power ?? 0.65) * 100);
+            const color =
+              st === 'slice' ? '#d97706' : st === 'dropshot' ? '#059669' : '#0284c7';
+            showTimedCallout({
+              title: `${sd.toUpperCase()} ${st.toUpperCase()}`,
+              subtitle: `POWER ${pwrPct}%`,
+              color,
+            });
             setShotMix((prev) => ({
               topspin: prev.topspin + (st === 'topspin' ? 1 : 0),
               slice: prev.slice + (st === 'slice' ? 1 : 0),
@@ -257,6 +336,20 @@ export const LiveMatchView: React.FC = () => {
               fh: prev.fh + (sd === 'forehand' ? 1 : 0),
               total: prev.total + 1,
             }));
+          } else if (evt.name === 'missed_swing' && evt.by === 'player') {
+            const reasonRaw = String(evt.data.reason ?? 'missed');
+            const reasonLabel =
+              reasonRaw === 'too_early'
+                ? 'TOO EARLY'
+                : reasonRaw === 'too_late'
+                  ? 'TOO LATE'
+                  : 'OUT OF REACH';
+            showTimedCallout({
+              title: 'MISSED',
+              subtitle: reasonLabel,
+              color: '#dc2626',
+              missed: true,
+            });
           }
         },
         onAgentRoundEnd: (roundEnd) => {
@@ -265,14 +358,34 @@ export const LiveMatchView: React.FC = () => {
           setRallyShotCount(0);
           if (roundEnd.winner === 'player' || roundEnd.winner === 'opponent') {
             const w = roundEnd.winner;
+            roundWinnersRef.current.set(roundEnd.round, w);
             setPointWinners((prev) => [...prev, w]);
           }
         },
         onShotRecorded: () => {
-          setRecentShots([...engine.getShotHistory().slice(-12)]);
+          const hist = engine.getShotHistory();
+          const currentRound = engine.getRenderState().score.pointIndex;
+          for (const s of hist) {
+            if (!seenShotIdsRef.current.has(s.id)) {
+              seenShotIdsRef.current.add(s.id);
+              if (s.actor === 'human') {
+                shotsSincePauseRef.current.push({ shot: s, round: currentRound });
+              }
+            }
+          }
+          setRecentShots([...hist.slice(-12)]);
           setRallyShotCount(engine.getCurrentRallyShotCount());
         },
         onPhaseChange: (nextPhase) => {
+          const prevPhase = prevPhaseRef.current;
+          prevPhaseRef.current = nextPhase;
+          if (nextPhase === 'demo_pause') {
+            setPauseColoredArcs(buildColoredPauseArcs());
+          } else if (prevPhase === 'demo_pause' && nextPhase === 'serving') {
+            // Resumed into next point after strategy pause -> start fresh arc window
+            shotsSincePauseRef.current = [];
+            setPauseColoredArcs([]);
+          }
           setPhase(nextPhase);
           setScore({ ...engine.getRenderState().score });
           setPolicyVersion(brain.getActiveBehaviour().version);
@@ -301,6 +414,14 @@ export const LiveMatchView: React.FC = () => {
 
     const unsubSwingStart = hardwareInput.onSwingStart((evt) => {
       engine.handlePlayerSwingStart(evt);
+      setSwingFlashActive(true);
+      if (swingFlashTimerRef.current !== null) {
+        window.clearTimeout(swingFlashTimerRef.current);
+      }
+      swingFlashTimerRef.current = window.setTimeout(() => {
+        swingFlashTimerRef.current = null;
+        setSwingFlashActive(false);
+      }, 450);
     });
     const unsubSwing = hardwareInput.onSwing((evt) => {
       engine.handlePlayerSwing(evt);
@@ -396,8 +517,13 @@ export const LiveMatchView: React.FC = () => {
         setImuConnected(hw.imuConnected);
         setImuHz(hw.imuHz);
         setImuCalibrated(hw.calibration === 'ready');
+        const link = hardwareInput.getRacketLink();
+        setImuLink(link.status);
+        setImuLinkError(link.error);
+        setImuLinkKind(link.link === 'none' && hw.imuConnected && hw.source === 'm5_ws' ? 'relay' : link.link);
         setWebcamActive(hw.arm.active);
         setArmZone(hw.arm.armZone);
+        setArmWing(hw.arm.wing);
         setStrikeWindowLive(incomingToPlayer);
         setVisualCue(matchStateRef.current.opponent.strategyVisualCue ?? 'balanced');
       }
@@ -430,6 +556,14 @@ export const LiveMatchView: React.FC = () => {
       cancelled = true;
       matchEpochRef.current += 1;
       cancelAnimationFrame(rafId);
+      if (calloutTimerRef.current !== null) {
+        window.clearTimeout(calloutTimerRef.current);
+        calloutTimerRef.current = null;
+      }
+      if (swingFlashTimerRef.current !== null) {
+        window.clearTimeout(swingFlashTimerRef.current);
+        swingFlashTimerRef.current = null;
+      }
       window.removeEventListener('keydown', onKeyDown, true);
       unsubWebcam();
       unsubSwingStart();
@@ -438,7 +572,19 @@ export const LiveMatchView: React.FC = () => {
       hardwareInput.webcam.stop();
       agent.disconnect();
     };
-  }, [handleRestart]);
+  }, [handleRestart, showTimedCallout, buildColoredPauseArcs]);
+
+  // Sections 16.3 & 19.2: Keep `match` and `paused` DOM attributes synced on both `<npc-panel>` custom elements
+  const isPaused = phase === 'demo_pause';
+  useEffect(() => {
+    for (const el of [leftPanelRef.current, rightPanelRef.current]) {
+      if (!el) continue;
+      if (matchId) el.setAttribute('match', matchId);
+      else el.removeAttribute('match');
+      if (isPaused) el.setAttribute('paused', '');
+      else el.removeAttribute('paused');
+    }
+  }, [matchId, isPaused]);
 
   const handleResume = useCallback(() => {
     const eng = engineRef.current;
@@ -480,8 +626,9 @@ export const LiveMatchView: React.FC = () => {
     hardwareInput.zeroRacket();
   }, []);
 
-  const handleConnectBle = useCallback(() => {
-    void hardwareInput.connectBle();
+  const handleConnectBle = useCallback((e: React.MouseEvent) => {
+    // The cable first. Shift+click goes straight to Bluetooth.
+    void hardwareInput.connectRacket({ bluetooth: e.shiftKey });
   }, []);
 
   const handleForceStart = useCallback(() => {
@@ -603,8 +750,16 @@ export const LiveMatchView: React.FC = () => {
             onClick={handleConnectBle}
             title={
               imuConnected
-                ? 'M5 IMU live — click to switch Web Bluetooth device'
-                : 'Click to pair M5-TENNIS-IMU over Web Bluetooth (or run ble_bridge.py)'
+                ? imuLinkKind === 'cable'
+                  ? 'Racket live over the USB cable.'
+                  : 'Racket live. Click to pair again: the cable first, Shift+click for Bluetooth.'
+                : imuLinkKind === 'cable' && imuLink === 'connected'
+                  ? 'The cable port is open but no readings are arriving. Check the racket is switched on.'
+                  : imuLink === 'reconnecting' || imuLink === 'connecting'
+                    ? `Looking for the racket, it reconnects by itself${imuLinkError ? ` (${imuLinkError})` : ''}. Click to pick it again.`
+                    : imuLink === 'failed'
+                      ? `Could not connect${imuLinkError ? `: ${imuLinkError}` : ''} Click to try again.`
+                      : 'Click to pair the racket: the USB cable first, Bluetooth if no cable port is picked. Shift+click goes straight to Bluetooth.'
             }
             style={{
               display: 'inline-flex',
@@ -629,12 +784,42 @@ export const LiveMatchView: React.FC = () => {
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: imuConnected ? (imuCalibrated ? '#059669' : '#d97706') : '#c8c7c0',
+                background: imuConnected
+                  ? imuCalibrated
+                    ? '#059669'
+                    : '#d97706'
+                  : imuLink === 'connecting' || imuLink === 'reconnecting'
+                    ? '#d97706'
+                    : imuLink === 'failed'
+                      ? '#dc2626'
+                      : '#c8c7c0',
                 flexShrink: 0,
               }}
             />
-            <span>IMU</span>
-            <span style={{ color: '#8c8b85' }}>{imuConnected ? `${imuHz}HZ` : 'PAIR'}</span>
+            <span>
+              {imuLinkKind === 'cable'
+                ? 'CABLE'
+                : imuLinkKind === 'bluetooth'
+                  ? 'BLUETOOTH'
+                  : imuLinkKind === 'relay'
+                    ? 'RELAY'
+                    : 'RACKET'}
+            </span>
+            <span style={{ color: '#8c8b85' }}>
+              {imuConnected
+                ? `${imuHz}HZ`
+                : imuLinkKind === 'cable' && imuLink === 'connected'
+                  ? 'NO DATA'
+                  : imuLink === 'failed' && (imuLinkError ?? '').startsWith('Click once more')
+                    ? 'CLICK AGAIN'
+                    : imuLink === 'connecting'
+                  ? 'CONNECTING'
+                  : imuLink === 'reconnecting'
+                    ? 'RECONNECTING'
+                    : imuLink === 'failed'
+                      ? 'RETRY'
+                      : 'PAIR'}
+            </span>
           </button>
           {imuConnected && (
             <button
@@ -796,37 +981,41 @@ export const LiveMatchView: React.FC = () => {
         </div>
       </header>
 
-      {/* Row 2: Section 9 Three-Column Body */}
+      {/* Row 2: Section 9 & 19.2 Three-Column Body (expands to 30% / 40% / 30% during strategy pause) */}
       <div
         style={{
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: showSidePanels
-            ? 'clamp(236px, 18.5vw, 276px) minmax(0, 1fr) clamp(236px, 18.5vw, 276px)'
-            : 'minmax(0, 1fr)',
+          gridTemplateColumns: isPaused
+            ? 'minmax(0, 30%) minmax(0, 40%) minmax(0, 30%)'
+            : showSidePanels
+              ? 'clamp(236px, 18.5vw, 276px) minmax(0, 1fr) clamp(236px, 18.5vw, 276px)'
+              : 'minmax(0, 1fr)',
           width: '100%',
           overflow: 'hidden',
+          transition: 'grid-template-columns 180ms ease',
         }}
       >
-        {/* Left slot: Live Player Cam + Pose skeleton above <npc-panel side="left"> short-loop read */}
+        {/* Left slot: populated by <npc-panel side="left" match={matchId} paused?> */}
         <aside
           style={{
-            display: showSidePanels ? 'flex' : 'none',
-            flexDirection: 'column',
+            display: isPaused || showSidePanels ? 'block' : 'none',
             background: '#ffffff',
             borderRight: '1px solid #e5e4df',
             minHeight: 0,
             overflowY: 'auto',
           }}
         >
-          <PlayerCamPreview />
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <npc-panel side="left" />
-          </div>
+          <npc-panel
+            ref={leftPanelRef}
+            side="left"
+            match={matchId || undefined}
+            paused={isPaused ? '' : undefined}
+          />
         </aside>
 
-        {/* Middle widest column: Scoreboard bar + Uncovered 3D Court + Kinematics Footer */}
+        {/* Middle column: Scoreboard bar + 3D Court + Section 16 PiP/Callout + Kinematics Footer */}
         <main
           style={{
             display: 'flex',
@@ -851,18 +1040,89 @@ export const LiveMatchView: React.FC = () => {
             onTogglePausedArcs={handleTogglePausedArcs}
           />
 
-          {/* Studio Viewport Mat framing Akhil's 3D CourtScene (0 overlays over the court) */}
+          {/* Studio Viewport Mat framing Akhil's 3D CourtScene */}
           <div style={{ flex: 1, minHeight: 0, padding: '8px 10px', position: 'relative' }}>
             <SceneSlot
               containerRef={sceneContainerRef}
               matchStateRef={matchStateRef}
-              replayMode={phase === 'demo_pause' && showPausedArcs}
-              replayArcs={recentShots}
+              replayMode={isPaused && showPausedArcs}
+              replayArcs={isPaused ? pauseColoredArcs : recentShots}
               onCanvasClick={handleCanvasClick}
             />
+
+            {/* Section 16.1: Bottom-left mirrored webcam + pose landmarks PiP (hidden during pause) */}
+            {!isPaused && (
+              <WebcamHudPip
+                webcamStatus={webcamStatus}
+                wing={armWing}
+                armZone={armZone}
+                swingFlashActive={swingFlashActive}
+              />
+            )}
+
+            {/* Section 16.2: Wii-Sports-style floating shot type + power % badge next to player racket */}
+            {!isPaused && shotCallout && (
+              <div
+                key={shotCallout.id}
+                style={{
+                  position: 'absolute',
+                  left: '58%',
+                  bottom: '22%',
+                  transform: 'translate(-20%, 0)',
+                  zIndex: 25,
+                  pointerEvents: 'none',
+                  padding: '8px 14px',
+                  borderRadius: 10,
+                  background: 'rgba(15, 23, 42, 0.88)',
+                  border: `2px solid ${shotCallout.color}`,
+                  boxShadow: '0 10px 28px rgba(2, 6, 23, 0.45)',
+                  backdropFilter: 'blur(6px)',
+                  textAlign: 'left',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: 18,
+                    fontWeight: 800,
+                    letterSpacing: '0.04em',
+                    color: shotCallout.missed ? '#f87171' : '#ffffff',
+                    lineHeight: 1.15,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 9,
+                      height: 9,
+                      borderRadius: '50%',
+                      background: shotCallout.color,
+                      marginRight: 8,
+                      verticalAlign: 'middle',
+                    }}
+                  />
+                  {shotCallout.title}
+                </div>
+                <div
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    color: shotCallout.missed ? '#fca5a5' : '#cbd5e1',
+                    marginTop: 2,
+                    paddingLeft: 17,
+                  }}
+                >
+                  {shotCallout.subtitle}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Bottom Tabular Kinematics & Policy Telemetry Strip (below court, never over court) */}
+          {/* Bottom Tabular Kinematics & Policy Telemetry Strip (hidden during pause per Section 19.2) */}
+          {!isPaused && (
           <footer
             style={{
               minHeight: 32,
@@ -1003,19 +1263,25 @@ export const LiveMatchView: React.FC = () => {
               <span>F Cinema</span>
             </div>
           </footer>
+          )}
         </main>
 
-        {/* Right slot: empty standby when :8000 is offline, populated by <npc-panel side="right"> when online */}
+        {/* Right slot: populated by <npc-panel side="right" match={matchId} paused?> */}
         <aside
           style={{
-            display: showSidePanels ? 'block' : 'none',
+            display: isPaused || showSidePanels ? 'block' : 'none',
             background: '#ffffff',
             borderLeft: '1px solid #e5e4df',
             minHeight: 0,
             overflowY: 'auto',
           }}
         >
-          <npc-panel side="right" />
+          <npc-panel
+            ref={rightPanelRef}
+            side="right"
+            match={matchId || undefined}
+            paused={isPaused ? '' : undefined}
+          />
         </aside>
       </div>
     </div>

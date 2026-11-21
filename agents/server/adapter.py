@@ -12,6 +12,7 @@ tests rule sets before answering can replace it without touching the rest.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import json
 import os
@@ -21,7 +22,7 @@ from dataclasses import asdict
 from typing import Any, Awaitable, Callable
 
 from server import config, matchups, measures, models_client
-from server.designer import env_dials, first_behaviour, numeric_settings, shorten, usable_dials
+from server.designer import chosen_by_player, counted_fields, env_dials, first_behaviour, numeric_settings, shorten, usable_dials
 from server.interfaces import (
     Adapter, Behaviour, Facts, MatchState, Matchup, Message, Proposal, RuleWriter, Trace, trace_message,
 )
@@ -51,7 +52,7 @@ FAIR_SNAP = float(os.environ.get("NPC_FAIR_SNAP", "0.05"))          # a weight t
 
 # What the adapter keeps for itself. None of it is sent to the game.
 PRIVATE_UPDATE_KEYS = ("eased_after_rounds", "dial_after_rounds", "rounds_at", "removed", "constant",
-                       "direction", "removed_rules", "caps", "played_at")
+                       "direction", "removed_rules", "caps", "played_at", "before", "took_back", "seen_round")
 PRIVATE_CHANGE_KEYS = ("after_round", "habit", "wants", "held")
 
 # An expectation is judged once the habit has shown up this often since.
@@ -382,7 +383,8 @@ def gather_facts(match: MatchState, earlier: list[Message] | None = None) -> Fac
         "confidence": confidence,
         "value_about": {spec.name: spec.about for spec in match.design.values},
         "measures": {**measures.summary(setup, match.events, match.rounds),
-                     "won_rounds": measures.how_won_rounds_end(setup, match.rounds, match.events)},
+                     "won_rounds": measures.how_won_rounds_end(setup, match.rounds, match.events),
+                     "lost_rounds": measures.how_lost_rounds_end(setup, match.rounds, match.events)},
         "recent_rounds": [
             {key: round_end.get(key) for key in ("round", "winner", "how", "stats") if key in round_end}
             for round_end in match.rounds[-RECENT_ROUNDS:]
@@ -468,7 +470,8 @@ class ModelRuleWriter(RuleWriter):
 
     def _schema(self, frame: dict[str, Any]) -> dict[str, Any]:
         text = {"type": "string"}
-        lines = {"type": "array", "minItems": MIN_LINES, "maxItems": MAX_LINES, "items": text}
+        compact = config.WRITER_COMPACT
+        lines = {"type": "array", "minItems": MIN_LINES, "maxItems": MIN_LINES if compact else MAX_LINES, "items": text}
         habit = {"type": "string", "enum": [*frame["habits"], "none"]}
         # With a matchup table, a new rule may only install a counter the table supports for this
         # player. A rule that checks an early sign that held up may install any option but a general one.
@@ -480,23 +483,23 @@ class ModelRuleWriter(RuleWriter):
         rule_fields: dict[str, Any] = {"do": {"type": "string", "enum": installable}}
         if frame["checkable"]:
             rule_fields["if"] = {"type": "array", "minItems": 1, "items": _condition_schema(sorted(frame["checkable"]))}
-        rule_fields.update({"why": text, "expect": text, "habit": habit})
+        rule_fields.update({"why": text, "expect": text} if compact else {"why": text, "expect": text, "habit": habit})
         properties: dict[str, Any] = {
             "observations": lines,
             "plan": lines,
             "new_rules": {"type": "array", "maxItems": most_rules, "items": {
                 "type": "object", "properties": rule_fields, "required": list(rule_fields),
             }},
-            "weights": {"type": "array", "maxItems": 3, "items": {
+            "weights": {"type": "array", "maxItems": 2 if compact else 3, "items": {
                 "type": "object",
                 "properties": {
                     "option": {"type": "string", "enum": sorted(frame["options"])},
                     "base": {"type": "number"},
                     "value": {"type": "string", "enum": [*frame["usable"], "none"]},
                     "weight": {"type": "number"},
-                    "why": text, "expect": text, "habit": habit,
+                    "why": text, "expect": text, **({} if compact else {"habit": habit}),
                 },
-                "required": ["option", "base", "value", "weight", "why", "expect", "habit"],
+                "required": ["option", "base", "value", "weight", "why", "expect", *([] if compact else ["habit"])],
             }},
         }
         required = ["observations", "plan", "new_rules", "weights"]
@@ -508,10 +511,11 @@ class ModelRuleWriter(RuleWriter):
     def _prompt(self, facts: Facts, frame: dict[str, Any]) -> str:
         setup = facts["setup"]
         summary = facts["measures"]
+        compact = config.WRITER_COMPACT
         out = [f"GOAL: {facts['goal']}", "", "MY OPTIONS (id: what it is):"]
         for option_id, (npc, decision, option) in frame["options"].items():
             detail = setup["npcs"][npc]["decisions"][decision]
-            out.append(f"- {option_id}: {detail['options'][option]} (chosen: {detail.get('when', '')})")
+            out.append(f"- {option_id}: {detail['options'][option]}" + ("" if compact else f" (chosen: {detail.get('when', '')})"))
 
         out += ["", "FACTS A RULE MAY CHECK AT THE MOMENT I CHOOSE:"]
         for name, kind in (setup.get("facts") or {}).items():
@@ -535,7 +539,7 @@ class ModelRuleWriter(RuleWriter):
             out.append("That is under the fair share. Do not add pressure: write no new rules, and only soften weights.")
 
         out += ["", "YOUR HABITS (counted from your own events):"]
-        for habit_id, habit in frame["habits"].items():
+        for habit_id, habit in list(frame["habits"].items())[:4 if compact else None]:
             total = round(habit["uses"] / habit["share"]) if habit.get("share") else habit["uses"]
             line = f"- {habit_id}: {habit['event']}.{habit['field']} = {habit['value']} on {habit['uses']} of {total}."
             if habit.get("payoff") is not None:
@@ -552,9 +556,7 @@ class ModelRuleWriter(RuleWriter):
         if frame["counters"]:
             out += ["", "COUNTERS FROM PRACTICE (most specific to you first). A new rule may only install one of these, "
                         "unless it checks an early sign that held up:"]
-            for row in facts["counters"]:
-                if row.get("general"):
-                    continue
+            for row in [row for row in facts["counters"] if not row.get("general")][:3 if compact else None]:
                 out.append(
                     f"- {row['npc']}.{row['decision']}.{row['option']}: against {row['against']} "
                     f"(you resemble them {row['likeness']}) I won {row['npc_wins']} of {row['rounds']}, "
@@ -569,9 +571,13 @@ class ModelRuleWriter(RuleWriter):
         won_lines = facts["measures"].get("won_rounds") or []
         if won_lines:  # how the player's won rounds ended, so the next change aims at what is winning them rounds
             out += ["", "HOW YOU WIN ROUNDS (aim your next change at this): " + " ".join(won_lines)]
+        lost_lines = facts["measures"].get("lost_rounds") or []
+        if lost_lines:  # rounds lost with nothing sent: the plainest sign this side has gone too far
+            out += ["", "HOW YOU LOSE ROUNDS (a sign I have gone too far, so add nothing that causes this): "
+                        + " ".join(lost_lines)]
         fact_of = {source: fact for fact, source in frame["signs"].items()}
         held = [tell for tell in frame["tells"].get("held") or [] if (tell["event"], tell["field"]) in fact_of]
-        weak = [tell for tell in frame["tells"].get("weak") or [] if (tell["event"], tell["field"]) in fact_of]
+        weak = [] if compact else [tell for tell in frame["tells"].get("weak") or [] if (tell["event"], tell["field"]) in fact_of]
         if held or weak:
             out += ["", "EARLY SIGNS (what you show just before you act, then what you really did):"]
             for mark, tell in [("HELD UP", tell) for tell in held] + [(f"did not hold up, {tell['why']}", tell) for tell in weak[:4]]:
@@ -588,10 +594,31 @@ class ModelRuleWriter(RuleWriter):
         earlier = [(update["version"], change) for update in facts["earlier"] for change in update["changes"] if change.get("expect")]
         if earlier:
             out += ["", "WHAT I EXPECTED EARLIER:"]
-            for version, change in earlier[-4:]:
+            for version, change in earlier[-(2 if compact else 4):]:
                 verdict = {True: "it held", False: "it did not hold"}.get(change.get("held"), "not judged yet")
                 out.append(f"- v{version}: {change.get('to')} I expected: {change['expect']} Result: {verdict}.")
 
+        if compact:
+            return "\n".join(out + [
+                "",
+                "WRITE THE NEXT UPDATE. Say only what changes.",
+                "- Answer the one habit you rely on most, or what is winning you rounds. Change something a player can "
+                "see: one new rule, or a weight shift of at least 0.2.",
+                f"- new_rules: 0 to 2. Each forces one option (`do`) when all its `if` conditions hold. I hold at most "
+                f"{MAX_RULES} rules for each NPC. keep_rules lists the current rules to keep: drop one only when it did "
+                "not hold or stands in the way.",
+                "- A condition names one fact or value (`on`). For names use op `is` or `in` with `names`. For a number "
+                "or a value use `above` or `below` with `number`. Fill the unused one with [] or 0. A rule must be true "
+                "only some of the time. Use a weight for anything that is always on.",
+                "- weights: 0 to 2. `base` is the option's new score (-1 leaves it). `value` and `weight` add weight "
+                "times that value (none and 0 leave it).",
+                f"- `why`: one line with a count from above. `expect`: one sentence on what should happen to your habit "
+                f"next. At most {MAX_WORDS} words each.",
+                f"- observations: {MIN_LINES} lines of at most 10 words, each with a count from above. plan: {MIN_LINES} "
+                "lines of at most 8 words, each a short sentence on what I will now do to you, the main change first.",
+                "- Plain words for someone watching. Write some_name as 'some name'. Never write an id like h1 or r1, "
+                "and never a raw score such as 0.8: say almost always, about half the time or rarely, or give a count.",
+            ])
         out += [
             "",
             "WRITE THE NEXT UPDATE.",
@@ -1010,6 +1037,105 @@ def build_checks(match: MatchState, updates: list[Message]) -> list[dict[str, An
 
 # ---------------------------------------------------------------- fairness
 
+def _window() -> int:
+    """How many of the latest rounds the fair band reads. 0 means the older blend over the whole match."""
+    return max(int(config.FAIR_WINDOW_ROUNDS), 0)
+
+
+def band() -> tuple[float, float, float]:
+    """(low, high, far): under low the next look eases, above high it adds strength, at far the step is widest."""
+    if _window():
+        return config.FAIR_LOW, config.FAIR_HIGH, config.FAIR_HIGH_FAR
+    return config.FAIR_SHARE_FLOOR, config.FAIR_SHARE_CEILING, config.FAIR_FAR_SHARE
+
+
+def first_step_due(match: MatchState, updates: list[Message], prior: float | None) -> bool:
+    """Whether the first real update of a match may go out: nothing real was sent yet, the player has
+    done enough to read, and the window reads the lower first mark or more."""
+    if not _window() or any(entry.get("changes") for entry in updates):
+        return False
+    sent = sum(1 for event in match.events if event.get("by") == "player")
+    return sent >= 3 and blended_share(played(match), prior) >= config.FAIR_FIRST_HIGH - 1e-9
+
+
+def last_step_failed(match: MatchState, updates: list[Message]) -> tuple[int, int] | None:
+    """(won, rounds) when the last real update added strength and the player has won too few of the rounds since."""
+    real = [entry for entry in updates if entry.get("changes")]
+    if not _window() or not real or real[-1].get("direction") != "up":
+        return None
+    since = match.rounds[int(real[-1].get("rounds_at", 0) or 0):]
+    if len(since) >= config.FAIR_LAST_STEP_ROUNDS and _won(since) <= config.FAIR_LAST_STEP_WINS:
+        return _won(since), len(since)
+    return None
+
+
+def proof_missing(match: MatchState, updates: list[Message]) -> bool:
+    """Whether more strength must wait: too few rounds that started after the last real update have finished."""
+    real = [entry for entry in updates if entry.get("changes")]
+    if not _window() or config.FAIR_PROOF_ROUNDS <= 0 or not real:
+        return False  # the first real update of a match needs no proof
+    return rounds_since(match, real[-1]) < config.FAIR_PROOF_ROUNDS
+
+
+def rounds_since(match: MatchState, entry: Message) -> int:
+    """The finished rounds that started after an update was built."""
+    seen = int(entry.get("seen_round", entry.get("rounds_at", 0)) or 0)
+    return sum(1 for round_end in match.rounds if int(round_end.get("round") or 0) > seen)
+
+
+def open_step(updates: list[Message]) -> tuple[Message, bool] | None:
+    """The latest update that added strength and is not yet taken back whole, and whether half of it already was."""
+    taken = {(entry.get("took_back") or {}).get("version"): bool((entry.get("took_back") or {}).get("whole"))
+             for entry in updates if isinstance(entry.get("took_back"), dict)}
+    for entry in reversed(updates):
+        if entry.get("direction") == "up" and isinstance(entry.get("before"), dict) and isinstance(entry.get("behaviour"), dict):
+            if taken.get(entry.get("version")) is True:
+                continue
+            return entry, entry.get("version") in taken
+    return None
+
+
+def take_back(current: Behaviour, before: Behaviour, after: Behaviour, whole: bool) -> tuple[Behaviour, list[str], list[dict[str, Any]]]:
+    """The play in hand with one earlier step taken back: all of it, or half of what it raised.
+
+    Returns the new play, the options it backs off in the game's own words, and the rules it took off.
+    A rule that step added comes off when all of it goes, or when the step moved no weight to halve.
+    """
+    out = copy.deepcopy(current)
+    half = toward_default(copy.deepcopy(current), before)
+    names: list[str] = []
+    removed: list[dict[str, Any]] = []
+    for npc, entry in (after.get("npcs") or {}).items():
+        target = (out.get("npcs") or {}).get(npc)
+        if not isinstance(target, dict):
+            continue
+        was = ((before.get("npcs") or {}).get(npc) or {}).get("decisions") or {}
+        moved = False
+        for decision, options in (entry.get("decisions") or {}).items():
+            for option, spec in (options or {}).items():
+                old = (was.get(decision) or {}).get(option)
+                slot = target.setdefault("decisions", {}).setdefault(decision, {})
+                if spec == old or option not in slot:
+                    continue
+                if float((spec or {}).get("base", 0)) <= float((old or {}).get("base", 0)) + 1e-9 \
+                        and (spec or {}).get("when") == (old or {}).get("when"):
+                    continue  # that step lowered this option, so there is nothing of it to take back
+                eased = old if whole else ((((half.get("npcs") or {}).get(npc) or {}).get("decisions") or {}).get(decision) or {}).get(option)
+                if eased is None:
+                    slot.pop(option, None)
+                else:
+                    slot[option] = copy.deepcopy(eased)
+                moved = True
+                names.append(words(option))
+        added = [rule for rule in _rules(after, npc) if not any(_same_rule(rule, old) for old in _rules(before, npc))]
+        here = [rule for rule in _rules(out, npc) if any(_same_rule(rule, new) for new in added)]
+        if here and (whole or not moved):
+            target["rules"] = [rule for rule in _rules(out, npc) if not any(_same_rule(rule, gone) for gone in here)]
+            removed += here
+            names += [words(option) for rule in here for option in (rule.get("do") or {}).values()]
+    return out, list(dict.fromkeys(names)), removed
+
+
 def _won(rounds: list[Message]) -> int:
     return sum(1 for round_end in rounds if round_end.get("winner") == "player")
 
@@ -1037,8 +1163,12 @@ def blended_share(rounds: list[Message], prior: float | None = None) -> float:
     With no table the middle of the band stands in for the estimate. Every
     band test uses this one number.
     """
-    weight = max(config.FAIR_BLEND_ROUNDS, 0.0)
     base = config.FAIR_TARGET_SHARE if prior is None else prior
+    window = _window()
+    if window:  # the last rounds only, with the rounds not yet played filled from the estimate
+        latest = rounds[-window:]
+        return (_won(latest) + base * (window - len(latest))) / window
+    weight = max(config.FAIR_BLEND_ROUNDS, 0.0)
     if weight + len(rounds) <= 0:
         return base
     return (base * weight + _won(rounds)) / (weight + len(rounds))
@@ -1049,8 +1179,9 @@ def struggling(rounds: list[Message], prior: float | None = None) -> tuple[int, 
     share is under the floor of the band, or the emergency brake is on."""
     if not rounds:
         return None
-    if brake(rounds) or blended_share(rounds, prior) < config.FAIR_SHARE_FLOOR - 1e-9:
-        return _won(rounds), len(rounds)
+    if brake(rounds) or blended_share(rounds, prior) < band()[0] - 1e-9:
+        latest = rounds[-_window():] if _window() else rounds
+        return _won(latest), len(latest)
     return None
 
 
@@ -1059,7 +1190,8 @@ def winning(rounds: list[Message], prior: float | None = None) -> tuple[int, int
     share is over the top of the band."""
     if not rounds:
         return None
-    return (_won(rounds), len(rounds)) if blended_share(rounds, prior) > config.FAIR_SHARE_CEILING + 1e-9 else None
+    latest = rounds[-_window():] if _window() else rounds
+    return (_won(latest), len(latest)) if blended_share(rounds, prior) > band()[1] + 1e-9 else None
 
 
 def under_band(rounds: list[Message], prior: float | None = None) -> tuple[int, int] | None:
@@ -1080,7 +1212,7 @@ def eased_lately(match: MatchState, updates: list[Message]) -> bool:
     return False
 
 
-_SCORE = re.compile(r"\b(won|win|lost|lose)\w*\s+(\d+)\s+of\s+(?:(?:the|your)\s+)?(?:last\s+)?(\d+)", re.IGNORECASE)
+_ROUND_COUNT = re.compile(r"\b(won|win|lost|lose)\w*\s+(\d+)\s+of\s+(?:(?:the|your)\s+)?(?:last\s+)?(\d+)", re.IGNORECASE)
 
 
 def score_holds(line: Any, match: MatchState) -> bool:
@@ -1093,7 +1225,7 @@ def score_holds(line: Any, match: MatchState) -> bool:
     text = str(line)
     if not any(word in text.lower() for word in ("round", "point", "game")):
         return True
-    for verb, got, of in _SCORE.findall(text):
+    for verb, got, of in _ROUND_COUNT.findall(text):
         got, of = int(got), int(of)
         fits = False
         for rounds in (match.rounds, played(match)):
@@ -1108,6 +1240,126 @@ def score_holds(line: Any, match: MatchState) -> bool:
 def lost_last(rounds: list[Message]) -> bool:
     """Whether strength must wait because the player lost the most recent round. They get a chance to win one first."""
     return bool(config.ADD_ONLY_AFTER_WIN and rounds and rounds[-1].get("winner") != "player")
+
+
+SETTING_WORDS = 16  # the most words in a line that says why a setting moves or why the play eases
+
+
+def dial_reason(step: dict[str, Any]) -> str:
+    """Why a setting moves, said by the NPC with the player's share as a percent. Built from the setting's own name."""
+    verb = "lower" if step["easier"] else "raise"
+    how = "again" if step.get("again") else "a step"
+    if not step.get("counted"):
+        return f"I {verb} {words(step['setting'])} {how}."
+    share = step["won"] / step["counted"]
+    return f"I {verb} {words(step['setting'])} {how}, because you win {'only ' if step['easier'] else ''}{share:.0%} of rounds."
+
+
+def dial_place(step: dict[str, Any]) -> str | None:
+    """Where a setting stands after its step, against where the game started it. So no two steps read the same."""
+    start, to = step.get("start"), step["to"]
+    if _is_number(start) and abs(to - start) < 1e-9:
+        return "It is back where we began."
+    if step.get("limit"):
+        return f"That is as {'low' if to < step['from'] else 'high'} as it goes."
+    if not _is_number(start):
+        return None
+    size = abs(to - step["from"])
+    steps = max(1, round(abs(to - start) / size)) if size > 1e-9 else 1
+    return f"It is {steps} step{'s' if steps != 1 else ''} {'above' if to > start else 'under'} where we began."
+
+
+def paired(line: Any, changes: list[dict[str, Any]]) -> str | None:
+    """The `where` of the one change a plan line speaks for, or None when that is not sure.
+
+    A line pairs with a change when it is that change's own reason, or when
+    it holds every word of the option or setting the change moves and no
+    other change fits as well. A wrong tag is worse than none.
+    """
+    text = plain(line).lower()
+    if len(changes) == 1:
+        return changes[0]["where"]
+    own = {change["where"] for change in changes if change.get("why") and plain(change["why"]).lower().startswith(text.rstrip("."))}
+    if len(own) == 1:
+        return next(iter(own))
+    said = set(re.findall(r"[a-z0-9]+", text))
+    fits: dict[str, int] = {}
+    for change in changes:
+        where = change["where"]
+        if where.startswith("settings."):
+            names = [where.split(".", 1)[1]]
+        elif where.endswith(".rules"):
+            rules = change.get("to") if isinstance(change.get("to"), list) else []
+            names = [str(option) for rule in rules if isinstance(rule, dict) for option in (rule.get("do") or {}).values()]
+        else:
+            names = [where.rsplit(".", 1)[-1]]
+        for name in names:
+            parts = [part for part in str(name).lower().split("_") if part]
+            if parts and all(part in said for part in parts):
+                fits[where] = max(fits.get(where, 0), len(parts))
+    best = max(fits.values(), default=0)
+    top = [where for where, score in fits.items() if score == best]
+    return top[0] if best and len(top) == 1 else None
+
+
+def main_choices(match: MatchState, updates: list[Message], least: int = 4) -> dict[tuple[str, str], str] | None:
+    """The player's main choice on each field, counted over their events since the last real update.
+    None when fewer than `least` events have come since, so nothing can be judged yet."""
+    real = [entry for entry in updates if entry.get("changes")]
+    since = int(real[-1].get("rounds_at", 0) or 0) if real else 0
+    recent = [event for event in match.events if event.get("by") == "player" and int(event.get("round") or 0) > since]
+    if len(recent) < least:
+        return None
+    return {(str(habit["event"]), str(habit["field"])): str(habit["value"]) for habit in measures.habits(match.setup, recent, 1)}
+
+
+def still_supported(match: MatchState, updates: list[Message], kept: dict[str, Any]) -> bool:
+    """Whether a kept step still answers what the player does now.
+
+    A habit a change names that was the player's main choice on its field when
+    the step was kept must still be it, counted since the last real update. A
+    rule's own condition is not judged, since a rule holds only some of the time.
+    """
+    now, then = main_choices(match, updates), kept.get("mains") or {}
+    if now is None:
+        return True
+    for change in (kept.get("proposal") or {}).get("changes") or []:
+        habit = change.get("habit")
+        if not isinstance(habit, dict):
+            continue
+        key, value = (str(habit.get("event")), str(habit.get("field"))), str(habit.get("value"))
+        if then.get(key) == value and now.get(key, value) != value:
+            return False
+    return True
+
+
+def seen_lines(match: MatchState, facts: Facts, updates: list[Message], update: Message) -> list[dict[str, Any]]:
+    """What the player did since the last real update, as at most 3 short counted lines built in code.
+
+    The habits a new rule in this update checks come first, then the strongest
+    of the rest, then how the player's won rounds ended. With fewer than 4
+    player events since the last real update, the whole match is counted.
+    """
+    real = [entry for entry in updates if entry.get("changes")]
+    since_round = int(real[-1].get("rounds_at", 0) or 0) if real else 0
+    mine = [event for event in match.events if event.get("by") == "player"]
+    recent = [event for event in mine if int(event.get("round") or 0) > since_round]
+    habits = list(measures.habits(match.setup, recent if len(recent) >= 4 else mine))
+    after = update.get("behaviour") if isinstance(update.get("behaviour"), dict) else {}
+    named = json.dumps([rule.get("if") for npc in after.get("npcs") or {} for rule in _rules(after, npc)
+                        if not any(_same_rule(rule, old) for old in _rules(match.behaviour, npc))])
+    habits = [habit for habit in habits if float(habit.get("share") or 0) >= 0.5]  # what the player mostly does, not a side note
+    habits = [habit for habit in habits if chosen_by_player(match.setup, str(habit["field"]))]  # never what the game picks for them
+    counted = set(counted_fields(match.design.values))
+    habits.sort(key=lambda habit: (0 if str(habit["field"]) in named else 1,          # what this update answers comes first,
+                                   0 if (str(habit["event"]), str(habit["field"])) in counted else 1))  # then what a value counts
+    lines = [{"text": shorten(habit_line(habit), 10), "event": str(habit["event"]), "field": str(habit["field"]),
+              "value": str(habit["value"]), "count": int(habit["uses"]),
+              "of": int(round(habit["uses"] / habit["share"])) if habit.get("share") else int(habit["uses"])} for habit in habits[:2]]
+    won = facts["measures"].get("won_rounds") or []
+    if won:
+        lines.append({"text": shorten(words(won[0]), 10), "field": "round_end"})
+    return lines[:3]
 
 
 def holding_update(match: MatchState, facts: Facts, source: str, checks: list[dict[str, Any]],
@@ -1126,7 +1378,10 @@ def holding_update(match: MatchState, facts: Facts, source: str, checks: list[di
         why = "You are under a fair share, so I am holding."
     else:
         why = "I see nothing new to answer yet, so I am holding."
-    habits = facts["measures"].get("habits") or []
+    if _window() and rounds and not (lost == 1 and step_ready):
+        latest = rounds[-_window():]
+        why = f"You won {_won(latest)} of the last {len(latest)}, so I am holding."
+    habits = [habit for habit in facts["measures"].get("habits") or [] if chosen_by_player(match.setup, str(habit["field"]))]
     seen = [f"You have won {_won(rounds)} of {len(rounds)} rounds so far." if rounds else "No round has finished yet."]
     seen += [habit_line(habit) for habit in habits[:2]]
     if len(seen) < MIN_LINES:
@@ -1140,6 +1395,7 @@ def holding_update(match: MatchState, facts: Facts, source: str, checks: list[di
         "observations": [shorten(line, MAX_WORDS) for line in seen[:3]],
         "plan": [why, "My rules and weights stay as they are."],
         "changes": [],
+        "holding": True,
         "behaviour": {**copy.deepcopy(match.behaviour), "version": version},
     }
     if checks:
@@ -1152,7 +1408,8 @@ def held_back(match: MatchState, updates: list[Message], direction: str) -> bool
     for update in reversed(updates):
         went = update.get("direction")
         if went in ("up", "down"):
-            return went != direction and len(match.rounds) - int(update.get("rounds_at", 0) or 0) < config.FAIR_NO_FLAP_ROUNDS
+            gap = config.FAIR_EASE_GAP_ROUNDS if _window() else config.FAIR_NO_FLAP_ROUNDS
+            return went != direction and len(match.rounds) - int(update.get("rounds_at", 0) or 0) < gap
     return False
 
 
@@ -1341,7 +1598,7 @@ def raise_dose(match: MatchState, facts: Facts, updates: list[Message]) -> Propo
         others = sum(max(float((weights or {}).get("base", 0)), 0.0) for name, weights in slot.items() if name != option)
         if others <= 0:
             continue
-        cap = step_cap(blended_share(played(match), facts["measures"].get("prior_share")))   # a bigger step for a bigger gap
+        cap = step_cap(blended_share(played(match), facts["measures"].get("prior_share")), facts["measures"].get("step_seconds"))   # a bigger step for a bigger gap
         step = config.DOSE_STEP * (cap / config.DOSE_MAX_STEP if 0 < config.DOSE_MAX_STEP < 1 else 1.0)
         share = min(held / (held + others) + step, 0.9)
         behaviour = copy.deepcopy(match.behaviour)
@@ -1372,16 +1629,57 @@ def always_true(setup: Message, rule: dict[str, Any]) -> bool:
     return bool(conditions)
 
 
-def step_cap(blended: float | None) -> float:
+def step_cap(blended: float | None, seconds: float | None = None) -> float:
     """The most of a decision's picks one update may move. It grows with the gap: the near cap at the
-    top of the band, rising in a straight line to the far cap for a player far above it."""
+    top of the band, rising in a straight line to the far cap for a player far above it.
+
+    `seconds` is the time since the last landing that added strength. The cap
+    is sized per second, so quicker updates take smaller steps and the rate
+    stays the same. None means the first landing, which gets the whole cap.
+    """
     near, far = config.DOSE_MAX_STEP, max(config.DOSE_MAX_STEP, config.DOSE_MAX_STEP_FAR)
     if near >= 1:
         return 1.0
-    low, high = config.FAIR_SHARE_CEILING, config.FAIR_FAR_SHARE
+    _, low, high = band()
     if blended is None or blended <= low or high <= low:
-        return near
-    return far if blended >= high else near + (far - near) * (blended - low) / (high - low)
+        cap = near
+    else:
+        cap = far if blended >= high else near + (far - near) * (blended - low) / (high - low)
+    if seconds is None or config.DOSE_SECONDS <= 0:
+        return cap
+    return min(cap, max(config.DOSE_MIN_STEP, cap * seconds / config.DOSE_SECONDS))
+
+
+# What the look now running has found. Each call of `adapt` gets its own, so two looks in flight never share it.
+_LOOK: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("look", default=None)
+
+
+def onto_play(written: Behaviour, proposed: Behaviour, current: Behaviour) -> Behaviour:
+    """Carry a proposal written against an older behaviour onto the behaviour in play.
+
+    Every difference between the older behaviour and the proposal is read as
+    'set this to that' and set on the behaviour in play. So a newer play is
+    kept, and two looks that reach the same conclusion do not double the dose.
+    """
+    out = copy.deepcopy(current)
+    for npc, entry in (proposed.get("npcs") or {}).items():
+        target = (out.get("npcs") or {}).get(npc)
+        if not isinstance(target, dict) or not isinstance(entry, dict):
+            continue
+        before = ((written.get("npcs") or {}).get(npc) or {}).get("decisions") or {}
+        for decision, options in (entry.get("decisions") or {}).items():
+            for option, spec in (options or {}).items():
+                if spec != (before.get(decision) or {}).get(option):
+                    target.setdefault("decisions", {}).setdefault(decision, {})[option] = copy.deepcopy(spec)
+        old_rules, new_rules = _rules(written, npc), _rules(proposed, npc)
+        rules = [rule for rule in _rules(out, npc)
+                 if not any(_same_rule(rule, old) for old in old_rules) or any(_same_rule(rule, new) for new in new_rules)]
+        for rule in new_rules:
+            if not any(_same_rule(rule, old) for old in old_rules) and not any(_same_rule(rule, have) for have in rules):
+                rules.append(copy.deepcopy(rule))
+        if rules or "rules" in target:
+            target["rules"] = rules
+    return out
 
 
 def counted_field(setup: Message, fact: Any) -> tuple[str, str] | None:
@@ -1473,7 +1771,7 @@ def limit_steps(match: MatchState, behaviour: Behaviour, facts: Facts, fired: di
     cap, and then the weights are shrunk toward the play in hand until every
     decision fits.
     """
-    cap = step_cap(blended)
+    cap = step_cap(blended, facts["measures"].get("step_seconds"))
     if cap >= 1:
         return behaviour
     shares = all_fire_shares(match, facts, behaviour, fired)
@@ -1716,6 +2014,32 @@ def fairness_dial(match: MatchState, updates: list[Message], prior: float | None
     return None
 
 
+def dial_home_step(match: MatchState, updates: list[Message], prior: float | None) -> dict[str, Any] | None:
+    """The first thing an ease does: a dial that sits harder than where the game started it goes one
+    step back toward its start. The choices of play are taken back only once every dial is home."""
+    share = struggling(played(match), prior) or last_step_failed(match, updates)
+    if not _window() or share is None or eased_lately(match, updates) or resting(match, updates):
+        return None
+    for dial in usable_dials(match.setup, match.design.dials) or env_dials(match.setup):
+        name = dial["setting"]
+        spec = match.setup["settings"][name]
+        now, start = dial_now(match.setup, updates, name), dial_now(match.setup, [], name)
+        if now is None or start is None:
+            continue
+        up = dial["harder"] == "up"
+        if not (now > start + 1e-9 if up else now < start - 1e-9):
+            continue  # this dial is home
+        low, high = spec["min"], spec["max"]
+        whole = all(isinstance(number, int) for number in (low, high, now))
+        size = max(1, round(DIAL_STEP * (high - low))) if whole else DIAL_STEP * (high - low)
+        to = max(start, now - size) if up else min(start, now + size)
+        step = {"setting": name, "from": now, "to": to if whole else round(to, 3), "easier": True,
+                "won": share[0], "counted": share[1], "with_rule": False, "expect": "You should win more rounds again."}
+        step["why"] = dial_reason(step)
+        return step
+    return None
+
+
 def with_dial(match: MatchState, update: Message | None, step: dict[str, Any], source: str,
               checks: list[dict[str, Any]]) -> Message:
     """Add a fairness step to an update, or build an update that carries only the step.
@@ -1781,13 +2105,13 @@ def ease_off(match: MatchState, facts: Facts, updates: list[Message]) -> Proposa
     the one after that is the game's default exactly. After each step it
     rests one round, so the step has a chance to show.
     """
-    share = struggling(played(match), facts["measures"].get("prior_share"))
+    share = struggling(played(match), facts["measures"].get("prior_share")) or last_step_failed(match, updates)
     if share is None:
         return None
     won, counted = share
     if eased_lately(match, updates):
         return {"hold": f"You won {won} of the last {counted} rounds. I eased off a moment ago, so I am giving that time to show."}
-    if held_back(match, updates, "down") and not brake(played(match)):
+    if not _window() and held_back(match, updates, "down") and not brake(played(match)):  # an ease never waits on a step up
         return {"hold": f"You won {won} of the last {counted} rounds. I stepped up a moment ago, so I am giving that time to show."}
     if resting(match, updates):
         return {"hold": f"You won {won} of the last {counted} rounds. I made a fairness adjustment a moment ago, so I am giving that time to show."}
@@ -1799,7 +2123,24 @@ def ease_off(match: MatchState, facts: Facts, updates: list[Message]) -> Proposa
     slide = sliding(match, updates)
     behaviour = copy.deepcopy(match.behaviour)
     removed: list[dict[str, Any]] = []
-    if in_play and not slide:
+    took: dict[str, Any] | None = None
+    latest = open_step(updates) if _window() else None
+    back = None
+    if latest is not None:
+        whole = latest[1] or blended_share(played(match), facts["measures"].get("prior_share")) < config.FAIR_EASE_ALL_UNDER
+        eased, names, gone = take_back(match.behaviour, latest[0]["before"], latest[0]["behaviour"], whole)
+        if names and not same_play(eased, match.behaviour):
+            back = (eased, names, gone, whole)
+    if back is not None:
+        behaviour, removed = back[0], back[2]
+        took = {"version": latest[0].get("version"), "whole": back[3]}
+        what = " and ".join(back[1][:2])
+        again = any(f"backing off {what}" in " ".join(str(line) for line in entry.get("plan") or []) for entry in updates[-6:])
+        place = ("I am back where we began" if same_play(behaviour, default)
+                 else "that whole step is gone" if back[3] else "half of that step stays")
+        plan = [shorten(f"That was too much, I am backing off {what}{' again' if again else ''}.", SETTING_WORDS),
+                f"You win only {won / max(counted, 1):.0%}, so {place}."]
+    elif in_play and not slide:
         npc, rule = newest_rule(match, updates) or in_play[0]
         behaviour["npcs"][npc]["rules"] = [kept for kept in _rules(behaviour, npc) if not _same_rule(kept, rule)]
         removed = [rule]
@@ -1824,7 +2165,7 @@ def ease_off(match: MatchState, facts: Facts, updates: list[Message]) -> Proposa
                 "I dropped my rules and moved halfway back to my start." if in_play else "I turned my counters down by half."]
     else:
         behaviour = copy.deepcopy(default)
-    if same_play(behaviour, default):
+    if same_play(behaviour, default) and back is None:
         behaviour = copy.deepcopy(default)
         plan = ["Going back to my starting play so you win about half.", "I play the way I did when we began."]
     habits = facts["measures"].get("habits") or []
@@ -1835,6 +2176,7 @@ def ease_off(match: MatchState, facts: Facts, updates: list[Message]) -> Proposa
         "changes": [],
         "why": f"You won {won} of the last {counted} rounds, under a fair share.",
         "eased": True,
+        "took_back": took,
         "removed_rules": [copy.deepcopy(rule.get("do") or {}) for rule in removed],
         "caps": caps_for(match.behaviour, behaviour, removed),
         "removed": [copy.deepcopy(rule.get("do") or {}) for rule in removed] + [
@@ -1871,6 +2213,8 @@ class GeminiAdapter(Adapter):
         self._told: dict[str, tuple[str, ...]] = {}   # the dials each match was last told fairness may move
         self._pending: dict[str, dict[str, Any]] = {}   # a finished step kept ready until the player wins a round
         self._answered: set[str] = set()           # matches whose rule writer answered in the look now running
+        self._added_at: dict[str, float] = {}      # when each match last got an update that added strength
+        self._asked_at: dict[str, int] = {}        # how many player events each match had when a writer was last asked
         self._sent_at: dict[str, float] = {}       # when each match last got an update
         self._background: set[asyncio.Future[Any]] = set()
 
@@ -1885,7 +2229,12 @@ class GeminiAdapter(Adapter):
         if kept is None:
             return None
         rounds = played(match)
-        if (time.monotonic() - kept["at"] > config.PENDING_STEP_SECONDS or len(rounds) - kept["played"] >= 3
+        now, then = getattr(match, "play_seconds", None), kept.get("play_at")
+        aged = (now - then) if _is_number(now) and _is_number(then) and now >= then and (now or then) else time.monotonic() - kept["at"]
+        real = [entry for entry in self._sent.get(match.match_id, []) if entry.get("changes")]
+        too_many = (rounds_since(match, real[-1]) >= config.PENDING_STEP_ROUNDS if real and _window()
+                    else len(rounds) - kept["played"] >= 3)
+        if (aged > config.PENDING_STEP_SECONDS or too_many
                 or len(rounds) < kept["played"] or blended_share(rounds, prior) <= config.FAIR_TARGET_SHARE):
             self._pending.pop(match.match_id, None)
             return None
@@ -1968,20 +2317,27 @@ class GeminiAdapter(Adapter):
         # written as usual, and the dial's step goes out beside them as its own change.
         self._say_dials(match)
         prior = facts["measures"].get("prior_share")
-        self._answered.discard(match.match_id)
-        update = await self._rewrite(match, source, name, wait, budget, plan, updates, checks, facts, began)
+        look: dict[str, Any] = {"answered": False}  # this call's own, so a second look in flight cannot clear it
+        _LOOK.set(look)
+        facts["measures"]["step_seconds"] = self._step_seconds(match)
+        home = dial_home_step(match, updates, prior)   # an ease is due and a dial sits harder than its start: it goes back first
+        if home is not None:
+            self._pending.pop(match.match_id, None)
+            update = None
+        else:
+            update = await self._rewrite(match, source, name, wait, budget, plan, updates, checks, facts, began)
         direction = None                               # which way this update moves the strength, kept for the next look
         if update is not None and update.get("writer") != CHECK:
             direction = update.get("direction") or ("down" if update.get("writer") == FAIRNESS else "up")
-        if update is None and config.ADAPTER_WRITERS:
+        if update is None and home is None and config.ADAPTER_WRITERS and not proof_missing(match, updates) and not look.get("in_band"):
             more = raise_dose(match, facts, updates)   # the player keeps winning and nothing was added
             if more is not None:
                 trace(trace_message("adapter", "step", more["why"], data={"writer": CHECK}))
                 update = await self._rewrite(match, source, name, wait, budget, plan, updates, checks, facts, began, more)
                 direction = "up" if update is not None else None
-        step = fairness_dial(match, updates, prior)    # counted now, on the rounds as they stand when it is sent
-        far = blended_share(played(match), prior) >= config.FAIR_FAR_SHARE and len(match.rounds) >= config.FAIR_FAR_ROUNDS
-        if step is not None:
+        step = home or fairness_dial(match, updates, prior)    # counted now, on the rounds as they stand when it is sent
+        far = config.FAIR_DIAL_JOINS and blended_share(played(match), prior) >= band()[2] and len(match.rounds) >= config.FAIR_FAR_ROUNDS
+        if step is not None and home is None:
             way = "down" if step["easier"] else "up"
             if (held_back(match, updates, way) and not (step["easier"] and brake(played(match)))) or direction not in (None, way):
                 step = None                            # no move against the last change in strength so soon
@@ -1992,21 +2348,51 @@ class GeminiAdapter(Adapter):
             elif not step["easier"] and update is not None:   # far above the band the dial joins in, and says so
                 moves = "goes up" if step["to"] > step["from"] else "comes down"
                 step["why"] = shorten(f"You won {step['won']} of {step['counted']}, so {words(step['setting'])} also {moves}.", MAX_WORDS)
-        if (step is not None and update is None and step["easier"]
+        if (step is not None and home is None and update is None and step["easier"]
                 and not same_play(match.behaviour, first_behaviour(match.setup))):
             trace(trace_message("adapter", "step", "The rules and weights ease first, so the fairness dial waits.",
                                 data={"writer": FAIRNESS, "setting": step["setting"]}))
             step = None
         if step is not None:
+            place = None
+            if _window():
+                spec = match.setup["settings"][step["setting"]]
+                earlier = [entry for entry in updates if entry.get("changes")]
+                step["start"] = dial_now(match.setup, [], step["setting"])
+                step["limit"] = min(abs(step["to"] - spec["min"]), abs(step["to"] - spec["max"])) < 1e-9
+                step["again"] = bool(earlier) and any(
+                    change["where"] == f"settings.{step['setting']}" and _is_number(change.get("from")) and _is_number(change.get("to"))
+                    and (change["to"] > change["from"]) == (step["to"] > step["from"]) for change in earlier[-1]["changes"])
+                step["why"] = dial_reason(step)        # said by the NPC, with the share as a percent
+                place = dial_place(step)               # and where the setting now stands, so no two steps read the same
+            alone = update is None
             update = with_dial(match, update, step, source, checks)
+            if _window() and alone:
+                update["plan"] = [step["why"], *([place] if place else update["plan"][1:2])]
             trace(trace_message("adapter", "done", step["why"],
                                 data={"writer": FAIRNESS, "setting": step["setting"], "from": step["from"], "to": step["to"]}))
             direction = direction or ("down" if step["easier"] else "up")
+        small = False
+        if (update is not None and direction == "up" and config.MIN_VISIBLE_STEP > 0 and "settings" not in update
+                and update.get("writer") != FAIRNESS and isinstance(update.get("behaviour"), dict)):
+            # A real update stops the game, so it must be a change a person can see within a few rounds.
+            after = update["behaviour"]
+            took = max(decision_moves(match, facts, after, all_fire_shares(match, facts, after, None)).values(), default=0.0)
+            if took < config.MIN_VISIBLE_STEP:
+                trace(trace_message("adapter", "step", f"My next change would move only {took:.0%} of my picks, too little to stop the game for.",
+                                    data={"writer": update.get("writer"), "step": round(took, 3)}))
+                update, direction, small = None, None, True
         if update is None:
             # Only a look in which a rule writer answered sends a holding update. The code-only checks between looks never do.
-            if not (config.SEND_HOLDING_UPDATES and match.match_id in self._answered):
+            last = self._sent.get(match.match_id, [])[-1:]
+            new_round = not last or int(last[0].get("rounds_at", -1) or 0) != len(match.rounds)
+            if not (config.SEND_HOLDING_UPDATES and (look["answered"] or small or (look.get("in_band") and new_round and match.rounds))):
                 return None
+            if (facts.get("behaviour") or {}).get("version") != match.behaviour.get("version"):
+                return None  # another look landed while this one was out, so there is nothing to say again
             update = holding_update(match, facts, source, checks, prior, match.match_id in self._pending)
+            if small:
+                update["plan"][0] = "My next change is too small to notice, so I am holding."
             trace(trace_message("adapter", "done", update["plan"][0], data={"writer": CHECK, "holding": True}))
         sent_at = self._sent_at.get(match.match_id)
         if sent_at is not None and 0 <= time.monotonic() - sent_at < config.MIN_UPDATE_GAP_SECONDS:
@@ -2014,12 +2400,62 @@ class GeminiAdapter(Adapter):
                                 data={"writer": update.get("writer")}))
             return None
         self._sent_at[match.match_id] = time.monotonic()
+        if direction == "up" and config.DOSE_MAX_STEP < 1:
+            allowed = step_cap(blended_share(played(match), prior), self._step_seconds(match))
+            after = update.get("behaviour") if isinstance(update.get("behaviour"), dict) else match.behaviour
+            moves = decision_moves(match, facts, after, all_fire_shares(match, facts, after, None))
+            took = max(moves.values(), default=0.0)
+            trace(trace_message("adapter", "step", f"This step moves {took:.2f} of my picks at the most, and {allowed:.2f} was allowed.",
+                                data={"writer": update.get("writer"), "step": round(took, 3), "allowed": round(allowed, 3)}))
+            self._added_at[match.match_id] = time.monotonic()
         if direction is not None:
             update["direction"] = direction
+        if update.get("changes") and look.get("kept"):
+            update["kept"] = True                      # released from a kept step: the next look waits for play to resume
+        if update.get("changes"):
+            update["seen_round"] = max((int(event.get("round") or 0) for event in match.events), default=0)
+            if direction == "up" and isinstance(update.get("behaviour"), dict):
+                update["before"] = copy.deepcopy(match.behaviour)   # so an ease can take this very step back
+        if config.PAUSE_LISTS and update.get("changes"):
+            # The game stops and shows these two lists, so they are short, counted and built to one form.
+            ease = update.get("writer") == FAIRNESS
+            given_lines = [{"text": shorten(plain(line), SETTING_WORDS if ease else 10)} for line in update.get("observations") or []]
+            # An ease leads with the score, which is its reason. Only a line that really counts rounds is tagged as one.
+            score = [{**line, "field": "round_end"} for line in given_lines if _ROUND_COUNT.search(line["text"])][:1] if ease else []
+            seen = score + seen_lines(match, facts, updates, update)   # counted now, since the last real update
+            if look.get("kept"):                       # a kept step never repeats the lines of the update before it
+                before_it = [entry for entry in updates if entry.get("changes")]
+                said = set(before_it[-1].get("observations") or []) if before_it else set()
+                seen = [line for line in seen if line["text"] not in said] or seen
+            texts = {line["text"] for line in seen}
+            if len(seen) < MIN_LINES:
+                # A writer's own count of a habit covers another stretch of the match, so it never stands beside these.
+                seen += [line for line in given_lines if line["text"] not in texts and not line["text"].startswith("You picked ")]
+            update["seen"] = seen[:3]
+            update["observations"] = [line["text"] for line in update["seen"]]
+            dials = [change["where"] for change in update["changes"] if change["where"].startswith("settings.")]
+            lines = [line for line in update.get("plan") or [] if plain(line) != "I keep watching how you play."] or list(update.get("plan") or [])
+            changing: list[dict[str, Any]] = []
+            for line in lines:
+                where = paired(line, update["changes"])
+                limit = SETTING_WORDS if (ease or (where or "").startswith("settings.")) else 8
+                changing.append({"text": shorten(plain(line), limit), **({"where": where} if where else {})})
+            for where in dials:     # a setting that moved always gets its own line, with its reason
+                if not any(line.get("where") == where for line in changing):
+                    why = next((change.get("why") for change in update["changes"] if change["where"] == where), "")
+                    changing.insert(1 if changing else 0, {"text": shorten(plain(why), SETTING_WORDS), "where": where})
+            changing.sort(key=lambda line: line.get("where", "").startswith("settings."))   # the change of play first
+            update["changing"] = changing[:3]
+            update["plan"] = [line["text"] for line in update["changing"]]
         update["played_at"] = len(played(match))
         update["rounds_at"] = len(match.rounds)
         self._sent.setdefault(match.match_id, []).append(update)
         return public(update)
+
+    def _step_seconds(self, match: MatchState) -> float | None:
+        """Seconds since this match last got an update that added strength. None before the first one."""
+        added = self._added_at.get(match.match_id)
+        return None if added is None else max(0.0, time.monotonic() - added)
 
     def _ledger(self, match: MatchState) -> list[Message]:
         """The updates this adapter made for the match, with the notes it keeps for itself.
@@ -2060,6 +2496,7 @@ class GeminiAdapter(Adapter):
         setup, trace = match.setup, match.trace
         value_names = {spec.name for spec in match.design.values}
 
+        kept: dict[str, Any] | None = None
         stuck = [] if given is not None else always_on(match, updates)      # checked on every look, under the band too
         proposal = given if given is not None else (None if stuck else ease_off(match, facts, updates))
         if proposal is not None and "hold" in proposal:
@@ -2071,6 +2508,20 @@ class GeminiAdapter(Adapter):
             # Under the fair band the writers may only ease, so nothing is written at all.
             trace(trace_message("adapter", "done", f"You won {low[0]} of {low[1]} rounds, so I add nothing for now.",
                                 data={"writer": "fairness"}))
+            return None
+        if proposal is not None and given is None and not stuck and self._pending.pop(match.match_id, None):
+            trace(trace_message("adapter", "step", "You are losing too much now, so I dropped the step I had ready.",
+                                data={"writer": "fairness"}))
+        if (_window() and not stuck and proposal is None and given is None and winning(played(match), prior) is None
+                and not first_step_due(match, updates, prior)):
+            # Inside the band: hold. No model call, and a step kept from before is not wanted any more.
+            latest = played(match)[-_window():]
+            if self._pending.pop(match.match_id, None):
+                trace(trace_message("adapter", "step", "You are back inside a fair share, so I dropped the step I had ready.",
+                                    data={"writer": "fairness"}))
+            trace(trace_message("adapter", "done", f"You won {_won(latest)} of the last {len(latest)}, so I am holding."
+                                if latest else "No round has finished yet, so I am holding.", data={"writer": "fairness", "in_band": True}))
+            (_LOOK.get() or {})["in_band"] = True
             return None
         if not stuck and proposal is None and not config.ADAPTER_WRITERS:
             trace(trace_message("adapter", "done", "The rule writers are switched off, so only the fairness check runs.",
@@ -2094,18 +2545,32 @@ class GeminiAdapter(Adapter):
                                     data={"writer": "fairness"}))
                 return None
             kept = self._ready_step(match, prior)
-            if kept is not None and lost_last(played(match)):
-                return None                            # a step is ready and waits for a round the player wins: no model call
+            if kept is not None and (lost_last(played(match)) or proof_missing(match, updates)):
+                return None                            # a step is ready and waits for a won round and for proof: no model call
+            if kept is not None and not still_supported(match, updates, kept):
+                self._pending.pop(match.match_id, None)
+                trace(trace_message("adapter", "step", "What you do has changed since I prepared my step, so I dropped it.",
+                                    data={"writer": kept["name"]}))
+                kept = None
             if kept is not None:
+                (_LOOK.get() or {})["kept"] = True
                 self._pending.pop(match.match_id, None)
                 trace(trace_message("adapter", "step", "You won a round, so the step I had ready goes out now.",
                                     data={"writer": kept["name"]}))
+            if kept is None:
+                # A paid look is only worth it when the player has done something since the last one started.
+                seen = sum(1 for event in match.events if event.get("by") == "player")
+                if self._asked_at.get(match.match_id) == seen:
+                    trace(trace_message("adapter", "done", "Nothing new from you since my last look, so I only "
+                                        "checked the score.", data={"writer": "fairness"}))
+                    return None
+                self._asked_at[match.match_id] = seen
             writer = _Ready(kept["name"], kept["proposal"]) if kept is not None else self._writer(name, wait, plan)
             name = getattr(writer, "name", name)
             try:
                 proposal = await asyncio.wait_for(writer.write(facts, budget, trace), budget)
                 if kept is None:
-                    self._answered.add(match.match_id)     # a rule writer's look completed: this look says where it stands
+                    (_LOOK.get() or {})["answered"] = True  # a rule writer's look completed: this look says where it stands
             except (asyncio.TimeoutError, models_client.ModelError) as error:
                 about = f"did not answer within {budget:g} seconds" if isinstance(error, asyncio.TimeoutError) else str(error)[:160]
                 trace(trace_message("adapter", "error", f"The {name} writer {about}. My current rules stay.",
@@ -2124,11 +2589,20 @@ class GeminiAdapter(Adapter):
                 trace(trace_message("adapter", "done", f"The {name} writer had nothing to change. My current rules stay.", data={"writer": name}))
                 return None
             # The writer took a while. Rounds may have ended since it began, so the band is tested again now.
-            if lost_last(played(match)):
+            earlier = [entry for entry in updates if entry.get("changes")]
+            if (lost_last(played(match)) or proof_missing(match, updates)) and earlier and earlier[-1].get("kept"):
+                trace(trace_message("adapter", "done", "My last step was one I had kept ready, so I do not keep another.",
+                                    data={"writer": "fairness"}))
+                return None
+            if lost_last(played(match)) or proof_missing(match, updates):
                 # The work is not thrown away: the step is kept ready and goes out after the next round the player wins.
                 self._pending[match.match_id] = {"proposal": proposal, "name": name, "at": time.monotonic(),
-                                                 "played": len(played(match))}
-                trace(trace_message("adapter", "done", "You lost the last round, so I add nothing until you win one.",
+                                                 "play_at": getattr(match, "play_seconds", None),
+                                                 "mains": main_choices(match, updates, 1) or {},
+                                                 "played": len(played(match)),
+                                                 "base": (kept or {}).get("base") or copy.deepcopy(facts.get("behaviour"))}
+                trace(trace_message("adapter", "done", "You lost the last round, so I add nothing until you win one."
+                                    if lost_last(played(match)) else "I want to see my last change play first, so my next step waits.",
                                     data={"writer": "fairness", "pending": True}))
                 return None
             late = struggling(played(match), prior)
@@ -2137,6 +2611,14 @@ class GeminiAdapter(Adapter):
                                     f"You won {late[0]} of {late[1]} rounds by the time my new rules were ready, so I dropped them.",
                                     data={"writer": "fairness"}))
                 return None
+
+        written = (kept or {}).get("base") or facts.get("behaviour") or {}
+        if given is None and name != FAIRNESS and not stuck and written and written != {**match.behaviour, "version": written.get("version")}:
+            # The play changed while this was being written (another look landed). Its changes are set on the play in hand.
+            proposal = {**proposal, "behaviour": onto_play(written, proposal["behaviour"], match.behaviour)}
+            trace(trace_message("adapter", "step", "My play changed while I was writing, so I set only what this look asks for on top of it.",
+                                data={"writer": name}))
+        facts["measures"]["step_seconds"] = self._step_seconds(match)   # the step is sized at the landing, not at the start
 
         # Check the behaviour. One repair attempt, then keep the current rules.
         version = int(match.behaviour.get("version", 0) or 0) + 1
@@ -2255,7 +2737,7 @@ class GeminiAdapter(Adapter):
             update["eased_after_rounds"] = len(match.rounds)
         if proposal.get("removed"):
             update["removed"] = proposal["removed"]
-        for key in ("removed_rules", "caps", "direction"):
+        for key in ("removed_rules", "caps", "direction", "took_back"):
             if proposal.get(key):
                 update[key] = proposal[key]
         if proposal.get("constant"):

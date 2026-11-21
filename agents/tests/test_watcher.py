@@ -291,8 +291,9 @@ async def test_read_updates_state_and_returns_player_read() -> None:
     assert read["values"] == {"comes_to_net": 0.9, "prefers_forehand": 0.7, "favours_flat": 0.7}
     assert read["based_on_events"] == 3
     assert read["low_confidence"] == ["favours_flat"]
-    assert read["why"] == ("Comes to the net: strongest on the first read. "
-                           "This rests on the model's read of the last 3 shot events.")
+    # A count-backed value is named before one that rests on the model's guess.
+    assert read["why"] == ("Hits forehands: strongest on the first read. "
+                           "2 of the last 3 shot events had side forehand, so this rests mostly on that count.")
     assert "picture_note" not in read
     assert match.player.reads == 1
     assert match.player.memory["readings"][0]["values"]["comes_to_net"] == 0.9
@@ -307,7 +308,8 @@ async def test_read_updates_state_and_returns_player_read() -> None:
     fake.reply = fake_reply(net=0.1, conf=1.0)
     read = await watcher.DecisionsWatcher(blend_factor=0.5, ask=fake).read(match)
     assert read["values"]["comes_to_net"] == pytest.approx(0.5)
-    assert read["why"] == "Comes to the net: weaker. This rests on the model's read of the last 4 shot events."
+    # The guess on comes_to_net moved more, but the count-backed change is the one named.
+    assert read["why"] == "Hits forehands: stronger. 3 of the last 4 shot events had side forehand, so this rests mostly on that count."
     assert match.player.reads == 2
 
 
@@ -582,4 +584,132 @@ async def test_a_read_from_pictures_alone_flags_every_counted_value() -> None:
     match.frames = frames
     read = await watcher.DecisionsWatcher(ask=FakeAsk(reply)).read(match)
     assert read["low_confidence"] == ["favors_forehand", "plays_dropshots"]
-    assert "No shot events yet" in read["why"]
+    # Nothing to count yet: both are held at the middle, not moved by the model's guess.
+    assert read["values"] == {"favors_forehand": 0.5, "plays_dropshots": 0.5}
+    assert read["why"].startswith("No player events yet")
+
+
+# ---------------------------------------------------------------- a spread of kinds, and reads that move
+
+import json as _json  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+from server import designer as _designer  # noqa: E402
+
+TENNIS_SETUP = _json.loads((_Path(__file__).resolve().parent.parent / "examples" / "tennis" / "setup.json").read_text())
+
+
+def test_the_designer_writes_eight_to_ten_values_of_different_kinds() -> None:
+    values = _designer.shape_values(TENNIS_SETUP, _designer.plain_values(TENNIS_SETUP))
+    kinds = [v.kind for v in values]
+    assert 8 <= len(values) <= 10
+    assert kinds.count("camera") >= 2 and "level" in kinds and "share" in kinds
+    assert all(len(v.about.split()) <= 6 for v in values)
+    per_field: dict[str, int] = {}
+    for v in values:
+        if v.counts and not v.counts.get("mean"):
+            per_field[v.counts["field"]] = per_field.get(v.counts["field"], 0) + 1
+            assert v.counts["field"] not in ("from", "other_position", "result")  # never a place the player can't choose
+    assert all(n <= 2 for n in per_field.values())
+
+
+def test_complements_and_a_third_share_on_one_field_are_dropped() -> None:
+    def share(name: str, values: list[str]) -> ValueSpec:
+        return ValueSpec(name, name, {"type": "noul", "instructions": "?"},
+                         counts={"event": "shot", "field": "side", "values": values})
+    kept = _designer.shape_values(TENNIS_SETUP, [share("fh", ["forehand"]), share("bh", ["backhand"])])
+    assert "fh" in [v.name for v in kept] and "bh" not in [v.name for v in kept]
+
+
+def test_written_practice_players_cover_each_main_option() -> None:
+    values = _designer.shape_values(TENNIS_SETUP, _designer.plain_values(TENNIS_SETUP))
+    topspin_first = [{"name": n, "plays": {"shot": {"shot_type": {"topspin": 0.8, "flat": 0.05, "slice": 0.1,
+                                                                   "dropshot": 0.05, "lob": 0.0}}}} for n in ("a", "b", "c")]
+    added = {p["name"] for p in _designer.missing_main_players(TENNIS_SETUP, values, topspin_first)}
+    assert {"slice_first", "dropshot_first"} <= added
+
+
+def level_spec() -> ValueSpec:
+    return ValueSpec("level_of_power", "Swings hard", {"type": "noul", "instructions": "?"},
+                     counts={"event": "shot", "field": "power", "mean": True}, kind="level")
+
+
+def test_a_level_is_the_mean_scaled_by_the_range() -> None:
+    target = anchors.target_for(TENNIS_LIKE, level_spec())
+    assert target.mean and anchors.next_action_question(target)["type"] == "noul"
+    share, uses, n = anchors.counted_share([tshot(i, power=p) for i, p in enumerate([0.2, 0.4, 0.9])], target)
+    assert share == pytest.approx(0.5) and n == 3
+
+
+async def test_a_counted_share_still_moves_after_many_events() -> None:
+    values = [spec("plays_dropshots", "Plays dropshots", counts=DROPSHOTS)]
+    reply = {"answers": {"plays_dropshots": {"type": "choice", "confidence": 0.9,
+                                             "probabilities": {"dropshot": 0.3, "topspin": 0.7}}}}
+    events = [tshot(i, kind="dropshot" if i % 3 == 0 else "topspin") for i in range(40)]
+    match, _ = tennis_match(events, values)
+    w = watcher.DecisionsWatcher(ask=FakeAsk(reply))
+    before = (await w.read(match))["values"]["plays_dropshots"]
+    match.events.append(tshot(40, kind="dropshot"))
+    after = (await w.read(match))["values"]["plays_dropshots"]
+    assert after - before > 0.02
+
+
+async def test_a_camera_value_keeps_its_number_without_its_picture() -> None:
+    cam = ValueSpec("side_on", "Stands side-on", {"type": "noul", "instructions": "Look at the `court` picture. Side-on?"},
+                    kind="camera")
+    reply = {"answers": {"side_on": {"type": "noul", "noul": 0.9, "confidence": 0.9}}}
+    match, _ = make_match([shot(1)], {"t": 1, "views": {"court": {"mime_type": "image/jpeg", "data": tiny_image("JPEG")}}})
+    match.design.values = [cam]
+    w = watcher.DecisionsWatcher(ask=FakeAsk(reply))
+    first = await w.read(match)
+    assert first["values"]["side_on"] == 0.9 and "side_on" not in first["low_confidence"]
+    match.frames = None
+    match.events.append(shot(2))
+    w._ask = FakeAsk({"answers": {"side_on": {"type": "noul", "noul": 0.1, "confidence": 0.9}}})
+    second = await w.read(match)
+    assert second["values"]["side_on"] == 0.9 and "side_on" in second["low_confidence"]
+
+
+
+async def test_a_value_never_read_sits_at_the_middle_and_is_flagged() -> None:
+    values = [spec("comes_to_net", "Comes to the net"), spec("hits_hard", "Swings hard")]
+    reply = {"answers": {"comes_to_net": {"type": "noul", "noul": 0.9, "confidence": 0.9}}}  # no answer for hits_hard
+    match, _ = tennis_match([tshot(1)], values)
+    read = await watcher.DecisionsWatcher(ask=FakeAsk(reply)).read(match)
+    assert read["values"]["hits_hard"] == 0.5 and "hits_hard" in read["low_confidence"]
+
+
+async def test_a_counted_value_with_no_events_of_its_kind_is_held_and_never_named() -> None:
+    # The game sends no swing_start events, so a value counting them has nothing to count.
+    setup = {**TENNIS_LIKE, "events": {**TENNIS_LIKE["events"], "swing_start": {"fields": {"backswing": {"min": 0, "max": 1}}}}}
+    swing = ValueSpec("level_of_backswing", "Big backswing", {"type": "noul", "instructions": "?"},
+                      counts={"event": "swing_start", "field": "backswing", "mean": True}, kind="level")
+    side = spec("share_of_side_forehand", "Hits forehands", counts={"event": "shot", "field": "side", "values": ["forehand"]})
+    match, _ = tennis_match([tshot(i, side="forehand" if i % 2 else "backhand") for i in range(6)], [swing, side])
+    match.setup = setup
+    w = watcher.DecisionsWatcher(ask=FakeAsk({"answers": {
+        "level_of_backswing": {"type": "noul", "noul": 0.79, "confidence": 0.9},
+        "share_of_side_forehand": {"type": "choice", "confidence": 0.9, "probabilities": {"forehand": 0.5, "backhand": 0.5}},
+    }}))
+    for i in range(3):
+        match.events.append(tshot(10 + i, side="forehand"))
+        read = await w.read(match)
+        assert read["values"]["level_of_backswing"] == 0.5 and "level_of_backswing" in read["low_confidence"]
+        assert not read["why"].startswith("Big backswing")
+
+
+
+def test_a_value_that_counts_nothing_and_names_no_picture_is_dropped() -> None:
+    guess = ValueSpec("takes_huge_backswings", "Takes huge early backswings", {"type": "noul", "instructions": "Big backswings?"})
+    kept = _designer.shape_values(TENNIS_SETUP, [guess])
+    assert "takes_huge_backswings" not in [v.name for v in kept]
+    assert len(kept) >= 8 and any(v.kind == "level" and v.counts["field"] == "backswing" for v in kept)
+
+
+def test_a_camera_value_finds_its_view_by_whole_name() -> None:
+    def cam(text: str) -> ValueSpec:
+        return ValueSpec("c", "c", {"type": "noul", "instructions": text}, kind="camera")
+    setup = {"views": {"court": "", "player_cam": ""}}
+    assert watcher._camera_view(setup, cam("In player_cam: is the player side-on?")) == "player_cam"
+    assert watcher._camera_view(setup, cam("Look at the `court` picture.")) == "court"
+    assert watcher._camera_view(setup, cam("Look at the courtside crowd.")) is None

@@ -30,7 +30,7 @@ function formatCallBadge(phase: MatchRenderState['phase'], rawCall: string, rall
     return { text: 'AWAITING READY', tone: 'neutral' };
   }
   if (phase === 'demo_pause') {
-    return { text: 'GAME PAUSED', tone: 'pause' };
+    return { text: 'STRATEGY PAUSE', tone: 'pause' };
   }
   if (phase === 'match_over') {
     return { text: 'EVALUATION COMPLETE', tone: 'accent' };
@@ -109,8 +109,8 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
       }}
     >
       {/* Left: Tabular Broadcast Scoreboard */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <span
             style={{
               width: 7,
@@ -405,8 +405,8 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
                 <polygon points="2,1 9,5 2,9" />
               </svg>
-              <span>Resume</span>
-              <KeyHint label="P" dark />
+              <span>Continue</span>
+              <KeyHint label="ENTER" dark />
             </button>
             {onTogglePausedArcs && (
               <button
@@ -466,8 +466,6 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
                 <path d="M2.2 4.5A4.2 4.2 0 1 1 2.5 8.3" />
                 <polyline points="2,1.8 2,4.7 4.9,4.7" />
               </svg>
-              <span>Restart</span>
-              <KeyHint label="⇧R" />
             </button>
           </>
         ) : phase === 'match_over' ? (

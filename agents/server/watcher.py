@@ -10,6 +10,7 @@ game comes from the game's own `setup`.
 """
 from __future__ import annotations
 
+import re
 import asyncio
 import base64
 import io
@@ -361,16 +362,27 @@ def explain(
     player: PlayerState,
     labels: dict[str, str],
     rests_on: dict[str, str],
+    counted: set[str] | None = None,
+    skip: set[str] | None = None,
 ) -> str:
     """One short line naming the biggest change and what it rests on, in plain words.
 
     The numbers travel in `values`, so the line carries counts but no 0 to 1 scores.
     `labels` maps each value to its plain `about` line. `rests_on` says, for
-    each value, what the value rests on.
+    each value, what the value rests on. A change backed by counts (`counted`)
+    is named before one that rests on the model's guess, and a value in `skip`
+    (one held because there is nothing to count yet) is never named.
     """
-    names = [n for n in player.values if n in rests_on]
+    skip = skip or set()
+    names = [n for n in player.values if n in rests_on and n not in skip]
     if not names:
+        if any(n in rests_on for n in skip):
+            return "No player events yet, so the counted values are held at the middle."
         return "No values were read."
+    backed = [n for n in names if n in (counted or set())]
+    moved = [n for n in backed if abs(player.values[n] - (before.get(n) or 0.0)) >= 0.005]
+    if moved or (backed and all(before.get(n) is None for n in names)):
+        names = moved or backed
 
     def label(name: str) -> str:
         text = (labels.get(name) or name.replace("_", " ")).strip().rstrip(".")
@@ -497,6 +509,9 @@ class DecisionsWatcher:
         liked = [spec.name[len(anchors.LIKE):] for spec in specs if spec.name.startswith(anchors.LIKE)]
         likeness, liked_over = anchors.persona_likeness(match.setup, match.design.personas, match.events, liked)
         thin: set[str] = set()  # anchored values with too few events to call a habit yet
+        blind: set[str] = set()  # camera values whose picture did not come with this read
+        held: set[str] = set()   # counted values whose event has not happened yet
+        counted: set[str] = set()  # values backed by enough counted events
         rests_on: dict[str, str] = {}
         anchored: dict[str, tuple[float, float]] = {}
         for spec in specs:
@@ -516,6 +531,18 @@ class DecisionsWatcher:
                 field = target.field.replace("_", " ")
                 event = target.event.replace("_", " ")
                 if n == 0:
+                    # Nothing to count yet: hold the middle rather than follow the model's guess.
+                    anchored[spec.name] = (0.5, 0.0)
+                    held.add(spec.name)
+                    rests_on[spec.name] = f"No {event} events yet, so this is held at the middle."
+                    continue
+                if n >= anchors.MIN_EVENTS:
+                    counted.add(spec.name)
+                if target.mean and n:
+                    rests_on[spec.name] = (f"The mean {field} over the last {n} {event} events"
+                                           + (", so this rests mostly on that count." if weight >= 0.5
+                                              else f", with {read_words}."))
+                elif n == 0:
                     rests_on[spec.name] = f"No {event} events yet, so this rests on {read_words}."
                 elif weight >= 0.5:
                     rests_on[spec.name] = (f"{uses} of the last {n} {event} events had {field} {what}, "
@@ -524,21 +551,25 @@ class DecisionsWatcher:
                     so_far = f"{n} {event} event" + ("" if n == 1 else "s")
                     rests_on[spec.name] = (f"Only {so_far} so far ({uses} with {field} {what}), "
                                            f"so this rests mostly on {read_words}.")
+            elif getattr(spec, "kind", "") == "camera" and _camera_view(match.setup, spec) not in views_used:
+                blind.add(spec.name)
+                rests_on[spec.name] = "No new picture to look at, so this keeps its last number."
             elif persona is not None and persona in likeness:
                 weight = anchors.count_weight(liked_over)
                 if liked_over < anchors.MIN_EVENTS:
                     thin.add(spec.name)
+                else:
+                    counted.add(spec.name)
                 anchored[spec.name] = (weight * likeness[persona] + (1 - weight) * reading,
                                        weight + (1 - weight) * confidence)
                 lead = "mostly on how well" if weight >= 0.5 else "partly on how well"
                 rests_on[spec.name] = (f"This rests {lead} this kind of player explains the player's "
                                        f"counted choices over {liked_over} events, and on {read_words}.")
             elif persona is not None:
-                rests_on[spec.name] = (f"This rests on {read_words} alone: this kind of player "
-                                       f"has no numbers to compare the counts with yet.")
+                rests_on[spec.name] = "No numbers for this kind of player yet, so this rests on the model's read alone."
             else:
                 rests_on[spec.name] = f"This rests on {read_words}."
-        unanchored = {n: r for n, r in readings.items() if n not in anchored}
+        unanchored = {n: r for n, r in readings.items() if n not in anchored and n not in blind}
         update_player(match.player, unanchored, self.blend_factor)  # also counts this read
         for name, (value, confidence) in anchored.items():
             match.player.values[name] = round(value, 4)
@@ -556,16 +587,20 @@ class DecisionsWatcher:
 
         low = sorted(
             spec.name for spec in specs
-            if match.player.confidence.get(spec.name, 0.0) < config.MIN_CONFIDENCE or spec.name in thin
+            if match.player.confidence.get(spec.name, 0.0) < config.MIN_CONFIDENCE
+            or spec.name in thin or spec.name in blind or spec.name in held
+            or spec.name not in match.player.values
         )
         message: Message = {
             "type": "player_read",
             "match_id": match.match_id,
             "round": _latest_round(match),
             "t": _latest_t(match),
-            "values": {spec.name: round(match.player.values.get(spec.name, 0.0), 3) for spec in specs},
+            # A value never read yet sits at the middle, and is named in low_confidence.
+            "values": {spec.name: round(match.player.values.get(spec.name, 0.5), 3) for spec in specs},
             "based_on_events": player_events,
-            "why": explain(before, match.player, {spec.name: spec.about for spec in specs}, rests_on),
+            "why": explain(before, match.player, {spec.name: spec.about for spec in specs}, rests_on,
+                           counted=counted, skip=held | blind),
             "low_confidence": low,
         }
         if views_used:
@@ -580,6 +615,16 @@ class DecisionsWatcher:
             data={"values": message["values"], "low_confidence": low, "input_tokens": tokens},
         ))
         return message
+
+
+def _camera_view(setup: Message, spec: ValueSpec) -> str | None:
+    """The picture a camera value's question names."""
+    text = str(spec.question.get("instructions") or "")
+    for name in (setup.get("views") or {}):
+        # The name as a whole word, whatever stands next to it: backticks, a colon, a full stop.
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(str(name))}(?![A-Za-z0-9_])", text):
+            return str(name)
+    return None
 
 
 def _latest_t(match: MatchState) -> float:
