@@ -63,7 +63,8 @@ export interface SetupRangeSetting {
 export interface SetupOptionsSetting {
   about: string;
   options: string[];
-  now: string;
+  /** A single option, or a LIST of options when `max_picks` is set. */
+  now: string | string[];
   /** VALOR extension: the setting takes a LIST of up to `max_picks` options (cover spots). */
   max_picks?: number;
 }

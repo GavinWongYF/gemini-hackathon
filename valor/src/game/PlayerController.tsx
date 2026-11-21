@@ -58,6 +58,7 @@ import { useMatch } from "./match";
 import { inputExtra } from "./input";
 import { roundReset } from "./teamAI";
 import { introCameraActive } from "./intro";
+import "./autopilot"; // ?autopilot=<scene> scripted player for demo recordings (inert otherwise)
 
 // ── Tunables (movement research) ────────────────────────────────────────
 const WALK_SPEED = 4.0; // m/s standing

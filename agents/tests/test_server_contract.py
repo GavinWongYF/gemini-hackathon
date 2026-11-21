@@ -207,3 +207,37 @@ def test_settings_in_an_update_are_checked():
         "strategy_update.settings.enemy_count", "strategy_update.settings.loadout",
         "strategy_update.settings.weather", "strategy_update.behaviour.version",
     ]
+
+
+def test_a_setting_that_takes_a_list_of_picks():
+    setup = tennis_setup()
+    setup["settings"] = {"obstacles": {"about": "Extra obstacles placed for the next round.",
+                                       "options": ["a", "b", "c", "d", "e"], "now": [], "max_picks": 3}}
+    assert check_setup(setup) == []
+    setup["settings"]["obstacles"]["now"] = "none"            # nothing picked, said the other way
+    assert check_setup(setup) == []
+    update = {
+        "type": "strategy_update", "match_id": "m_001", "version": 2, "source": "quick", "observations": [], "plan": [],
+        "changes": [{"where": "settings.obstacles", "from": [], "to": ["a", "c"], "why": "x"}],
+        "settings": {"obstacles": ["a", "c"]}, "behaviour": {**baseline_behaviour(setup), "version": 2},
+    }
+    assert check_message(setup, update) == []
+    for bad in (["a", "b", "c", "d"], ["a", "a"], ["z"], "a", [1]):
+        update["settings"]["obstacles"] = bad
+        assert wheres(check_message(setup, update)) == ["strategy_update.settings.obstacles"], bad
+    update["settings"]["obstacles"] = []
+    assert check_message(setup, update) == []
+    setup["settings"]["obstacles"]["now"] = ["a", "zz"]
+    assert wheres(check_setup(setup)) == ["setup.settings.obstacles.now"]
+    setup["settings"]["obstacles"].update(now=[], max_picks=0)
+    assert wheres(check_setup(setup)) == ["setup.settings.obstacles.max_picks"]
+
+
+def test_single_option_settings_still_take_one_name():
+    update = {
+        "type": "strategy_update", "match_id": "c_001", "version": 2, "source": "quick", "observations": [], "plan": [],
+        "changes": [], "settings": {"loadout": ["rifles"]}, "behaviour": {**baseline_behaviour(CSGO_SETUP), "version": 2},
+    }
+    assert wheres(check_message(CSGO_SETUP, update)) == ["strategy_update.settings.loadout"]
+    update["settings"]["loadout"] = "pistols"
+    assert check_message(CSGO_SETUP, update) == []

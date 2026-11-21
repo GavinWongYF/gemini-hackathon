@@ -187,6 +187,22 @@ def numeric_settings(setup: Message) -> dict[str, dict[str, Any]]:
     }
 
 
+def world_settings(setup: Message) -> dict[str, dict[str, Any]]:
+    """The settings `setup` declares with a list of `options`: one name, or up to `max_picks` names.
+
+    These change the world the next round is played in. A rule writer may move
+    them to answer a habit. The number settings stay with fairness alone.
+    """
+    settings = setup.get("settings")
+    if not isinstance(settings, dict):
+        return {}
+    return {
+        name: spec for name, spec in settings.items()
+        if isinstance(spec, dict) and isinstance(spec.get("options"), list) and spec["options"]
+        and all(isinstance(option, str) for option in spec["options"])
+    }
+
+
 def usable_dials(setup: Message, dials: Any) -> list[dict[str, str]]:
     """Keep the dials that name a numeric setting of this game and say which way is harder."""
     numeric = numeric_settings(setup)

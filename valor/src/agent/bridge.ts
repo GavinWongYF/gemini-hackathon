@@ -82,6 +82,7 @@ export class AgentBridge {
     if (o.readyTimeoutMs) this.readyTimeoutMs = o.readyTimeoutMs;
     this.setup = valorSetup({ matchId: this.matchId, mode: "live" });
     this.standin = new OfflineStandin(this.matchId, this.settings);
+    useAgentStatus.getState().set({ matchId: this.matchId });
     this.enterStandin("starting — waiting for the agent server");
     this.connect();
     this.frameTimer = setInterval(() => this.sendFrame(), 1000);

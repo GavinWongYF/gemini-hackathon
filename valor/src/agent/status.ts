@@ -15,6 +15,8 @@ export interface StrategyChange {
 export interface AgentStatus {
   mode: AgentMode;
   connected: boolean; // WebSocket to ws://localhost:8000/ws is open
+  /** The match_id this game sent in `setup` (the <npc-panel>s pin to it). */
+  matchId: string;
   version: number; // behaviour version currently applied
   source: "quick" | "full" | null;
   observations: string[]; // 2-4 lines: what the agents noticed about the player
@@ -28,6 +30,7 @@ export interface AgentStatus {
 export const useAgentStatus = create<AgentStatus>((set) => ({
   mode: "baseline",
   connected: false,
+  matchId: "",
   version: 0,
   source: null,
   observations: [],

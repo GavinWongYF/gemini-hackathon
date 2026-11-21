@@ -16,6 +16,25 @@ npm test           # unit tests (combat, etc.)
 
 Open `/` and click to play. The mouse is captured; press Esc to pause.
 
+### Play against the live Gemini agents
+
+Needs `GEMINI_API_KEY` in the repo root `.env` and Python 3.11+ for the agent server.
+
+```bash
+# 1. agent server (first time: python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt)
+cd agents && ./.venv/bin/python -m server
+
+# 2. once per machine: practice run, so the server learns VALOR's matchups (~1 min, exits by itself)
+cd valor && npx tsx scripts/record/practice.ts
+
+# 3. the game
+cd valor && npx vite --port 5174      # open http://localhost:5174/?game
+```
+
+The left panel is the Decisions API's read of you; the right panel is Neon's plan. The between-round card says "LIVE GEMINI" when updates come from the server (it falls back to an offline stand-in if the server is down). Enemies start adapting after about two rounds.
+
+Scripted demo player: add `&autopilot=flank_left` or `&autopilot=rush_open_mid`. Record a scene with `node scripts/record/record.mjs flank_left 240` (needs Chrome and ffmpeg; output in `recordings/`, which is git-ignored).
+
 ## Controls
 
 | Key | Action |

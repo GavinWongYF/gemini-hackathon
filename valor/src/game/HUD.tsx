@@ -5,6 +5,7 @@
 //   top-left    enemy-AI chip (tiny, live play only)
 //   top-center  match bar: alive pips · score · round/clock
 //   top-right   killfeed (team-coloured callsigns, fades after a few seconds)
+//   side rails  the agent server's <npc-panel side="left|right"> (ui/NpcPanels.tsx)
 //   center      crosshair + hitmarker (nothing else is ever drawn here in play)
 //   upper third round banners
 //   low center  agent card between rounds; "Esc · Tab" hint during play
@@ -26,6 +27,7 @@ import { TabScoreboard } from "./ui/TabScoreboard";
 import { displayName, teamOf } from "./ui/roster";
 import { C, DISPLAY, BODY, TEAM_COLOR, UiStyles, panel } from "./ui/theme";
 import { DamageIndicator } from "./ui/DamageIndicator";
+import { NpcPanels } from "./ui/NpcPanels";
 
 const HITMARKER_MS = 140;
 const KILLFEED_MS = 7000;
@@ -210,6 +212,7 @@ export function HUD() {
         <>
           <Scoreboard />
           <AgentChip />
+          <NpcPanels />
           <RoundBanner />
           <AgentCard />
         </>

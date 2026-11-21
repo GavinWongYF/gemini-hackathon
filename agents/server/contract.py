@@ -215,6 +215,8 @@ def check_setup(setup: Any) -> list[Problem]:
             has_range = _is_number(spec.get("min")) and _is_number(spec.get("max"))
             if not (has_options or has_range):
                 problems.append(_problem("A setting needs `options`, or `min` and `max`.", where, spec))
+            elif "max_picks" in spec and not (has_options and is_pick_setting(spec)):
+                problems.append(_problem("`max_picks` must be a whole number of 1 or more, on a setting with `options`.", f"{where}.max_picks", spec.get("max_picks")))
             elif "now" in spec:
                 problems += _check_setting(setup, name, spec["now"], f"{where}.now")
 
@@ -230,12 +232,33 @@ def check_setup(setup: Any) -> list[Problem]:
     return problems
 
 
+def is_pick_setting(spec: Any) -> bool:
+    """A setting whose value is a list of up to `max_picks` different names from its `options`."""
+    picks = spec.get("max_picks") if isinstance(spec, dict) else None
+    return isinstance(picks, int) and not isinstance(picks, bool) and picks >= 1
+
+
+def check_setting(setup: Message, name: str, value: Any, where: str = "settings") -> list[Problem]:
+    """Does one setting's value fit what `setup` allows for it? An empty list when it does."""
+    return _check_setting(setup, name, value, f"{where}.{name}")
+
+
 def _check_setting(setup: Message, name: str, value: Any, where: str) -> list[Problem]:
     """Does a setting's value fit what `setup` allows for it?"""
     spec = (setup.get("settings") or {}).get(name)
     if not isinstance(spec, dict):
         return [_problem(f"`setup` did not declare a setting called `{name}`.", where, value)]
-    if isinstance(spec.get("options"), list):
+    if isinstance(spec.get("options"), list) and is_pick_setting(spec):
+        picks = spec["max_picks"]
+        if value == "none":
+            value = []      # a game may start a list setting at "none": nothing picked
+        if (not isinstance(value, list) or len(value) > picks
+                or any(not isinstance(item, str) or item not in spec["options"] for item in value)
+                or len(set(value)) != len(value)):
+            return [_problem(
+                f"The setting `{name}` must be a list of up to {picks} different names from: "
+                f"{', '.join(map(str, spec['options']))}.", where, value)]
+    elif isinstance(spec.get("options"), list):
         if value not in spec["options"]:
             return [_problem(f"The setting `{name}` must be one of: {', '.join(map(str, spec['options']))}.", where, value)]
     elif not _is_number(value) or not spec.get("min", value) <= value <= spec.get("max", value):

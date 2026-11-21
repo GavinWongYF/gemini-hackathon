@@ -22,15 +22,24 @@ from dataclasses import asdict
 from typing import Any, Awaitable, Callable
 
 from server import config, matchups, measures, models_client
-from server.designer import chosen_by_player, counted_fields, env_dials, first_behaviour, numeric_settings, shorten, usable_dials
+from server.designer import (
+    chosen_by_player, counted_fields, env_dials, first_behaviour, numeric_settings, shorten, usable_dials, world_settings,
+)
 from server.interfaces import (
     Adapter, Behaviour, Facts, MatchState, Matchup, Message, Proposal, RuleWriter, Trace, trace_message,
 )
 
 try:  # the shared contract check, when it is there
     from server.contract import check_behaviour as _contract_check
+    from server.contract import check_setting as _setting_check
+    from server.contract import is_pick_setting
 except Exception:  # pragma: no cover - only when the contract module is missing
     _contract_check = None
+    _setting_check = None
+
+    def is_pick_setting(spec: Any) -> bool:
+        picks = spec.get("max_picks") if isinstance(spec, dict) else None
+        return isinstance(picks, int) and not isinstance(picks, bool) and picks >= 1
 
 MAX_RULES = 4          # for each NPC, as the contract says
 MAX_LINES = 3          # observations and plan
@@ -375,9 +384,17 @@ def gather_facts(match: MatchState, earlier: list[Message] | None = None) -> Fac
     resembles = matchups.likeness(read, names)
 
     plan = setup.get("plan") or {}
+    sent = earlier if earlier is not None else match.updates
+    world = {
+        name: {"about": spec.get("about", ""), "options": list(spec["options"]),
+               "max_picks": spec.get("max_picks") if is_pick_setting(spec) else None,
+               "now": world_now(setup, sent, name)}
+        for name, spec in world_settings(setup).items()
+    }
     return {
         "setup": setup,
         "goal": setup.get("goal", ""),
+        "world": world,
         "behaviour": copy.deepcopy(match.behaviour),
         "values": values,
         "confidence": confidence,
@@ -466,7 +483,8 @@ class ModelRuleWriter(RuleWriter):
             if not row.get("general"):
                 counters.setdefault(f"{row['npc']}.{row['decision']}.{row['option']}", row)
         return {"options": options, "habits": habits, "rules": rules, "usable": usable,
-                "checkable": checkable, "counters": counters, "signs": signs, "tells": tells, "general": general}
+                "checkable": checkable, "counters": counters, "signs": signs, "tells": tells, "general": general,
+                "world": facts.get("world") or {}}
 
     def _schema(self, frame: dict[str, Any]) -> dict[str, Any]:
         text = {"type": "string"}
@@ -503,6 +521,20 @@ class ModelRuleWriter(RuleWriter):
             }},
         }
         required = ["observations", "plan", "new_rules", "weights"]
+        if frame["world"]:
+            # A world setting: what the next round is played in. One change at most, to one name or a list of names.
+            names = sorted({option for spec in frame["world"].values() for option in spec["options"]})
+            most = max([spec["max_picks"] or 1 for spec in frame["world"].values()])
+            properties["world"] = {"type": "array", "maxItems": 1, "items": {
+                "type": "object",
+                "properties": {
+                    "setting": {"type": "string", "enum": sorted(frame["world"])},
+                    "picks": {"type": "array", "maxItems": most, "items": {"type": "string", "enum": names}},
+                    "why": text, "expect": text, **({} if compact else {"habit": habit}),
+                },
+                "required": ["setting", "picks", "why", "expect", *([] if compact else ["habit"])],
+            }}
+            required.append("world")
         if frame["rules"]:
             properties["keep_rules"] = {"type": "array", "items": {"type": "string", "enum": sorted(frame["rules"])}}
             required.append("keep_rules")
@@ -597,6 +629,20 @@ class ModelRuleWriter(RuleWriter):
             for version, change in earlier[-(2 if compact else 4):]:
                 verdict = {True: "it held", False: "it did not hold"}.get(change.get("held"), "not judged yet")
                 out.append(f"- v{version}: {change.get('to')} I expected: {change['expect']} Result: {verdict}.")
+
+        if frame["world"]:
+            out += ["", "WORLD SETTINGS I MAY CHANGE FOR THE NEXT ROUND (name: what it is; options; now):"]
+            for name, spec in frame["world"].items():
+                now = spec["now"]
+                shown = ", ".join(now) if isinstance(now, list) else str(now)
+                many = f" Pick up to {spec['max_picks']} different names, or none." if spec["max_picks"] else " Pick exactly one name."
+                out.append(f"- {name}: {spec['about']} Options: {', '.join(spec['options'])}. Now: {shown or 'none'}.{many}")
+            out.append(
+                "- world: 0 or 1 change. Change a world setting only when it answers a habit of yours, or how you win "
+                "or lose rounds, by what its description says it does and by the GOAL. `picks` is its new value: the "
+                "names to pick (one name for a single-choice setting, [] to clear a list). `why` gives a count from "
+                "above; `expect` says what should happen to your habit next. Leave world empty when nothing fits."
+            )
 
         if compact:
             return "\n".join(out + [
@@ -739,12 +785,31 @@ class ModelRuleWriter(RuleWriter):
             changes.append({"where": f"{npc}.{decision}.{option}", "from": before, "to": after, "why": plain(raw.get("why")),
                             "expect": plain(raw.get("expect")), "habit": habit_of(raw)})
 
+        settings: dict[str, Any] = {}
+        for raw in reply.get("world") or []:
+            if not isinstance(raw, dict) or raw.get("setting") not in frame["world"] or raw["setting"] in settings:
+                continue
+            name, spec = raw["setting"], frame["world"][raw["setting"]]
+            picks = [str(item) for item in raw.get("picks") or [] if isinstance(item, str)]
+            value: Any = list(dict.fromkeys(picks)) if spec["max_picks"] else (picks[0] if picks else None)
+            problems = _setting_check(setup, name, value) if _setting_check is not None else []
+            if value is None or problems:
+                dropped.append(f"A change to the setting {name} did not fit what the game allows: {value!r}"[:200])
+                continue
+            if value == spec["now"] or (spec["max_picks"] and spec["now"] in (None, "none") and value == []):
+                continue
+            settings[name] = value
+            changes.append({"where": f"settings.{name}", "from": spec["now"], "to": value, "why": plain(raw.get("why")),
+                            "expect": plain(raw.get("expect")), "habit": habit_of(raw)})
+
         proposal: Proposal = {
             "behaviour": behaviour,
             "observations": tidy_lines(reply.get("observations")),
             "plan": tidy_lines(reply.get("plan")),
             "changes": changes,
         }
+        if settings:
+            proposal["settings"] = settings
         if dropped:
             proposal["dropped"] = dropped
         return proposal
@@ -2040,6 +2105,30 @@ def dial_home_step(match: MatchState, updates: list[Message], prior: float | Non
     return None
 
 
+def world_now(setup: Message, updates: list[Message], name: str) -> Any:
+    """Where a world setting stands: the last value sent, or the one the game started with ([] for none picked)."""
+    spec = (setup.get("settings") or {}).get(name) or {}
+    now = spec.get("now")
+    for update in reversed(updates):
+        sent = update.get("settings")
+        if isinstance(sent, dict) and name in sent:
+            now = sent[name]
+            break
+    if is_pick_setting(spec) and not isinstance(now, list):
+        now = [] if now in (None, "none") or now not in spec.get("options", []) else [now]
+    return copy.deepcopy(now)
+
+
+def checked_world(setup: Message, proposal: Proposal, writer: str) -> dict[str, Any]:
+    """The world settings a writer proposed that pass the contract. Never number settings: those are fairness's."""
+    sent = proposal.get("settings")
+    if writer == FAIRNESS or not isinstance(sent, dict):
+        return {}
+    world = world_settings(setup)
+    return {name: copy.deepcopy(value) for name, value in sent.items()
+            if name in world and (_setting_check is None or not _setting_check(setup, name, value))}
+
+
 def with_dial(match: MatchState, update: Message | None, step: dict[str, Any], source: str,
               checks: list[dict[str, Any]]) -> Message:
     """Add a fairness step to an update, or build an update that carries only the step.
@@ -2073,7 +2162,7 @@ def with_dial(match: MatchState, update: Message | None, step: dict[str, Any], s
         if checks:
             update["checks"] = checks
     update["changes"] = [*update.get("changes", []), change]
-    update["settings"] = {name: step["to"]}
+    update["settings"] = {**(update.get("settings") or {}), name: step["to"]}
     update["dial_after_rounds"] = len(match.rounds)
     if step["easier"]:
         update["eased_after_rounds"] = len(match.rounds)
@@ -2669,6 +2758,11 @@ class GeminiAdapter(Adapter):
                     rule["why"] = habit_line(habits[0]) if habits else ""
 
         changes = with_reasons(diff(match.behaviour, behaviour), proposal.get("changes") or [])
+        world = checked_world(setup, proposal, name)
+        changes += [{key: value for key, value in change.items() if value is not None}
+                    for change in proposal.get("changes") or []
+                    if isinstance(change, dict) and str(change.get("where", "")).startswith("settings.")
+                    and change["where"][len("settings."):] in world]
         if name == FAIRNESS:  # every fairness step is marked, with its counted reason
             for index, change in enumerate(changes):
                 change.update({"kind": FAIRNESS, "why": proposal.get("why", ""), "measure": "player_win_rate"})
@@ -2729,6 +2823,8 @@ class GeminiAdapter(Adapter):
             "changes": changes,
             "behaviour": behaviour,
         }
+        if world:
+            update["settings"] = world
         if checks:
             update["checks"] = checks
         if "tested" in proposal:

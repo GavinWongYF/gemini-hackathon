@@ -226,9 +226,9 @@ export function valorSetup(opts: { matchId: string; mode?: MatchMode }): GameSet
         now: BASELINE_AGENT_SETTINGS.enemy_damage,
       },
       cover: {
-        about: `Extra cover added to the plaza for the next round: a list of up to ${MAX_COVER_OBJECTS} spot names from cover_spot, or none. Cover can never block a lane completely or sit on a spawn.`,
+        about: `Extra cover added to the plaza for the next round: a list of up to ${MAX_COVER_OBJECTS} spot names from cover_spot (an empty list means no extra cover). Cover can never block a lane completely or sit on a spawn.`,
         options: COVER_SPOTS.map((c) => c.name),
-        now: "none",
+        now: [],
         max_picks: MAX_COVER_OBJECTS,
       },
     },

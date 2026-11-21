@@ -145,7 +145,7 @@ It is the only place where a game says anything about itself. The agent server u
 | `events` | object | Everything the game will report. Each has `about` and its `fields`. |
 | `facts` | object | What an NPC can check at the moment it decides. Rules can only use these. |
 | `views` | object | The pictures the game can send, each with one line on what it shows. |
-| `settings` | object, optional | Things the agent server may change between rounds that aren't an NPC's choice. Each has `about`, then `options` or `min` and `max`, and `now`. |
+| `settings` | object, optional | Things the agent server may change between rounds that aren't an NPC's choice. Each has `about`, then `options` or `min` and `max`, and `now`. A setting with `options` and `max_picks` (a whole number, 1 or more) takes a list of 0 to `max_picks` different names from `options`, and its `now` is a list (`[]` for none). |
 | `default_behaviour` | object, optional | The behaviour the game already has, if it has one. It is also the baseline the adapted NPCs are compared against. If it's left out, the agent server writes the first behaviour and the baseline is every option equally likely. |
 | `practice` | object, optional | The scripted players the game can run with no screen. See [Practice runs](#practice-runs). |
 
@@ -712,6 +712,7 @@ It carries the new behaviour and the words for the break screen: what the agent 
 - Every look that completes sends an update. When nothing changes, it is a holding update: `changes` is empty, `"holding": true`, the play is the same, the version is new, and `plan` says why.
 - If nothing arrives, the game carries on with the old behaviour.
 - A numeric setting that a game marks as a difficulty or pacing dial, such as how fast the NPC moves, is changed by the agent server only as a fairness adjustment. It slows the NPC when the player is losing too many points and speeds it up when the player is winning too many, in small steps inside the setting's `min` and `max`. It is never used to answer a habit. The `changes` item for it says it is a fairness adjustment. It arrives in `settings`, as above. No shapes change.
+- A setting with `options` (one name, or a list of names with `max_picks`) is a world setting. A rule writer may change it to answer a habit, from what its `about` says and the game's `goal`. It arrives in `settings`, with a `changes` item whose `where` is `settings.<name>`, checked against `setup` like everything else.
 
 ### Did the last change work?
 
