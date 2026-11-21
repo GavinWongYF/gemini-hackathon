@@ -119,8 +119,11 @@ export const LiveMatchView: React.FC = () => {
 
   const [imuConnected, setImuConnected] = useState(false);
   const [imuHz, setImuHz] = useState(0);
+  const [imuCalibrated, setImuCalibrated] = useState(false);
   const [webcamActive, setWebcamActive] = useState(false);
+  const [webcamStatus, setWebcamStatus] = useState<'idle' | 'loading' | 'running' | 'error'>('idle');
   const [armZone, setArmZone] = useState<ArmZone>('center');
+  const [strikeWindowLive, setStrikeWindowLive] = useState(false);
   const [lastSwing, setLastSwing] = useState<SwingTelemetrySnapshot | null>(null);
   const [showSidePanels, setShowSidePanels] = useState(true);
 
@@ -160,6 +163,12 @@ export const LiveMatchView: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     hardwareInput.start();
+    const unsubWebcam = hardwareInput.webcam.subscribe((snap) => {
+      setWebcamStatus(snap.status);
+    });
+    // Auto-start laptop webcam so Felix & Gavin receive `frames.views.player_cam` and
+    // TennisSwingDetector tracks Forehand/Backhand + Topspin/Slice/Dropshot live!
+    void hardwareInput.webcam.start();
 
     const brain = new OpponentBrain();
     brainRef.current = brain;
@@ -288,12 +297,26 @@ export const LiveMatchView: React.FC = () => {
       engine.step(dt);
       engine.syncToRenderState(matchStateRef.current);
 
-      if (now - lastHudSyncMs >= 250) {
+      // Gate IMU + Webcam swing detection ONLY to when an incoming ball is approaching
+      // the player's hitting zone, and feed ball lateral offset for accurate FH/BH!
+      const b = matchStateRef.current.ball;
+      const p = matchStateRef.current.player;
+      const incomingToPlayer =
+        matchStateRef.current.phase === 'rally' &&
+        b.active &&
+        b.vz > 0 &&
+        b.z > -1.0 &&
+        b.z < p.z + 1.4;
+      hardwareInput.setStrikeWindow(incomingToPlayer, b.x - p.x);
+
+      if (now - lastHudSyncMs >= 200) {
         lastHudSyncMs = now;
         setImuConnected(hw.imuConnected);
         setImuHz(hw.imuHz);
+        setImuCalibrated(hw.calibration === 'ready');
         setWebcamActive(hw.arm.active);
         setArmZone(hw.arm.armZone);
+        setStrikeWindowLive(incomingToPlayer);
         setVisualCue(matchStateRef.current.opponent.strategyVisualCue ?? 'balanced');
       }
 
@@ -326,8 +349,11 @@ export const LiveMatchView: React.FC = () => {
       matchEpochRef.current += 1;
       cancelAnimationFrame(rafId);
       window.removeEventListener('keydown', onKeyDown, true);
+      unsubWebcam();
       unsubSwingStart();
       unsubSwing();
+      hardwareInput.setStrikeWindow(true);
+      hardwareInput.webcam.stop();
       agent.disconnect();
     };
   }, [handleRestart]);
@@ -348,6 +374,18 @@ export const LiveMatchView: React.FC = () => {
 
   const handleToggleSidePanels = useCallback(() => {
     setShowSidePanels((prev) => !prev);
+  }, []);
+
+  const handleToggleWebcam = useCallback(() => {
+    if (webcamStatus === 'running' || webcamStatus === 'loading') {
+      hardwareInput.webcam.stop();
+    } else {
+      void hardwareInput.webcam.start();
+    }
+  }, [webcamStatus]);
+
+  const handleZeroRacket = useCallback(() => {
+    hardwareInput.zeroRacket();
   }, []);
 
   const handleCanvasClick = useCallback(() => {
@@ -451,15 +489,83 @@ export const LiveMatchView: React.FC = () => {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           <TelemetryPill
-            dotColor={imuConnected ? '#059669' : '#c8c7c0'}
+            dotColor={imuConnected ? (imuCalibrated ? '#059669' : '#d97706') : '#c8c7c0'}
             label="IMU"
             detail={imuConnected ? `${imuHz}HZ` : 'KEY'}
           />
-          <TelemetryPill
-            dotColor={webcamActive ? '#059669' : '#c8c7c0'}
-            label="POSE"
-            detail={webcamActive ? armZone.toUpperCase() : 'IDLE'}
-          />
+          {imuConnected && (
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={handleZeroRacket}
+              title="Zero / Re-Zero M5 racket in any comfortable grip (also BtnA on M5)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                height: 24,
+                padding: '0 8px',
+                borderRadius: 5,
+                background: imuCalibrated ? '#fafaf8' : '#fef3c7',
+                color: imuCalibrated ? '#575652' : '#92400e',
+                border: `1px solid ${imuCalibrated ? '#e5e4df' : '#f59e0b'}`,
+                fontFamily: MONO,
+                fontSize: 10.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {imuCalibrated ? 'RE-ZERO' : 'ZERO M5'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="lab-btn"
+            onClick={handleToggleWebcam}
+            title="Toggle laptop webcam for pose tracking & Gemini player_cam frames"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 24,
+              padding: '0 8px',
+              borderRadius: 5,
+              background: '#fafaf8',
+              border: '1px solid #e5e4df',
+              fontFamily: MONO,
+              fontSize: 10.5,
+              fontWeight: 500,
+              color: '#141413',
+              letterSpacing: '0.02em',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background:
+                  webcamStatus === 'running'
+                    ? '#059669'
+                    : webcamStatus === 'loading'
+                      ? '#d97706'
+                      : '#c8c7c0',
+                flexShrink: 0,
+              }}
+            />
+            <span>CAM</span>
+            <span style={{ color: '#8c8b85' }}>
+              {webcamActive
+                ? armZone.toUpperCase()
+                : webcamStatus === 'loading'
+                  ? 'INIT'
+                  : webcamStatus === 'running'
+                    ? 'ON'
+                    : 'OFF'}
+            </span>
+          </button>
           {isOfflineNotAdapting ? (
             <span
               title="Agent backend at ws://localhost:8000/ws is not connected; opponent is running fixed baseline behaviour without adaptation."
@@ -626,19 +732,53 @@ export const LiveMatchView: React.FC = () => {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, whiteSpace: 'nowrap' }}>
-              <span>
-                <span style={{ color: '#8c8b85' }}>LAST STROKE </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#8c8b85' }}>SHOT</span>
                 {lastSwing ? (
-                  <span style={{ color: '#141413', fontWeight: 500 }}>
-                    {lastSwing.wing} · {lastSwing.shotType}{' '}
+                  <>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '1px 7px',
+                        borderRadius: 4,
+                        fontWeight: 700,
+                        fontSize: 10.5,
+                        color: '#ffffff',
+                        background:
+                          lastSwing.shotType === 'SLICE'
+                            ? '#d97706'
+                            : lastSwing.shotType === 'DROPSHOT'
+                              ? '#059669'
+                              : '#0284c7',
+                      }}
+                    >
+                      {lastSwing.wing} {lastSwing.shotType}
+                    </span>
                     <span style={{ color: '#575652', fontWeight: 400 }}>
                       PWR {lastSwing.power.toFixed(2)} · SPIN {lastSwing.rotation >= 0 ? '+' : ''}
                       {lastSwing.rotation.toFixed(2)} · {lastSwing.confidence}%
                     </span>
-                  </span>
+                  </>
                 ) : (
                   <span style={{ color: '#a1a1aa' }}>—</span>
                 )}
+              </span>
+
+              <span style={{ color: '#e5e4df' }}>|</span>
+
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: strikeWindowLive ? '#059669' : '#d4d3cd',
+                  }}
+                />
+                <span style={{ color: strikeWindowLive ? '#059669' : '#8c8b85', fontWeight: 600 }}>
+                  {strikeWindowLive ? 'SWING READY' : 'WAIT BALL'}
+                </span>
               </span>
 
               <span style={{ color: '#e5e4df' }}>|</span>
