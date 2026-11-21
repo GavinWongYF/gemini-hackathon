@@ -14,6 +14,7 @@ import { OpponentBrain } from '../ai/OpponentBrain';
 import { TennisMatchEngine, createInitialMatchRenderState } from '../engine/TennisMatchEngine';
 import { captureCourtJpeg } from './CourtFrameCapture';
 import { PauseDashboard, type PointWinnerRecord } from './PauseDashboard';
+import { PlayerCamPreview } from './PlayerCamPreview';
 import { SceneSlot } from './SceneSlot';
 
 declare global {
@@ -808,17 +809,21 @@ export const LiveMatchView: React.FC = () => {
           overflow: 'hidden',
         }}
       >
-        {/* Left slot: empty standby when :8000 is offline, populated by <npc-panel side="left"> when online */}
+        {/* Left slot: Live Player Cam + Pose skeleton above <npc-panel side="left"> short-loop read */}
         <aside
           style={{
-            display: showSidePanels ? 'block' : 'none',
+            display: showSidePanels ? 'flex' : 'none',
+            flexDirection: 'column',
             background: '#ffffff',
             borderRight: '1px solid #e5e4df',
             minHeight: 0,
             overflowY: 'auto',
           }}
         >
-          <npc-panel side="left" />
+          <PlayerCamPreview />
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <npc-panel side="left" />
+          </div>
         </aside>
 
         {/* Middle widest column: Scoreboard bar + Uncovered 3D Court + Kinematics Footer */}
