@@ -1,0 +1,1792 @@
+{
+  "about": "Cases for `pick` whose answer doesn't depend on chance. `expect.option` is the exact answer. `expect.one_of` lists the answers allowed when chance picks among them. Every SDK must pass all of them.",
+  "cases": [
+    {
+      "name": "rule_fires",
+      "about": "A rule whose conditions hold and whose option is legal decides.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "middle_short"
+      },
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "rule_skipped_not_legal",
+      "about": "A rule whose option isn't legal right now is skipped, and scoring decides.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "middle_short"
+      },
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "rule_condition_false",
+      "about": "A rule whose condition is false is skipped.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "middle_deep"
+      },
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "first_rule_wins",
+      "about": "When two rules hold, the first one decides.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              },
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "flat"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "left_short"
+      },
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "next_rule_after_illegal",
+      "about": "When the first rule's option isn't legal, the next rule that holds decides.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              },
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "flat"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "left_short"
+      },
+      "expect": {
+        "option": "flat",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "rule_for_other_decision",
+      "about": "A rule that forces a different decision doesn't decide this one.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "position": "middle_short"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "left_short"
+      },
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "rule_forces_two_decisions",
+      "about": "A rule can force more than one decision. Here the second one is asked for.",
+      "npc": "opponent",
+      "decision": "position",
+      "legal": [
+        "middle_deep",
+        "middle_short"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "position": {
+                "middle_deep": {
+                  "base": 1
+                },
+                "middle_short": {
+                  "base": 0
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob",
+                  "position": "middle_short"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "left_short"
+      },
+      "expect": {
+        "option": "middle_short",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "rule_with_no_conditions",
+      "about": "A rule with an empty `if` always holds.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "all_conditions_must_hold",
+      "about": "A rule fires only when every condition holds.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  },
+                  {
+                    "fact": "rally_length",
+                    "above": 4
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "left_short",
+        "rally_length": 2
+      },
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "all_weight_on_one",
+      "about": "With all the weight on one legal option, scoring always picks it.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "only_legal_options_scored",
+      "about": "An option with weight that isn't legal is never picked.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0.5
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "flat",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "when_adds_weight",
+      "about": "A `when` entry adds weight times value to the score.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0,
+                  "when": {
+                    "comes_to_net": 1
+                  }
+                },
+                "drop": {
+                  "base": 0
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {
+        "comes_to_net": 0.5
+      },
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "negative_score_counts_as_zero",
+      "about": "A score below 0 counts as 0.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0.3
+                },
+                "drop": {
+                  "base": 0.2,
+                  "when": {
+                    "stays_deep": -1
+                  }
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {
+        "stays_deep": 1
+      },
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "missing_value_in_when_is_zero",
+      "about": "A value the game hasn't received counts as 0 in a `when` entry.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0.5
+                },
+                "lob": {
+                  "base": 0,
+                  "when": {
+                    "comes_to_net": 1
+                  }
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "flat",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "missing_value_in_rule_is_zero",
+      "about": "A value the game hasn't received counts as 0 in a rule.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "value": "comes_to_net",
+                    "below": 0.1
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "missing_value_is_zero_with_is",
+      "about": "A missing value equals 0 for `is`.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "value": "comes_to_net",
+                    "is": 0
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "unknown_option_scores_zero",
+      "about": "A legal option the behaviour doesn't list scores 0.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "slice",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "value_above",
+      "about": "`above` holds when the value is greater.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "value": "flanks",
+                    "above": 0.6
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {
+        "flanks": 0.7
+      },
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "value_above_is_strict",
+      "about": "`above` doesn't hold when the value is equal.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "value": "flanks",
+                    "above": 0.6
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {
+        "flanks": 0.6
+      },
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "value_below",
+      "about": "`below` holds when the value is smaller.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "value": "stays_deep",
+                    "below": 0.5
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {
+        "stays_deep": 0.3
+      },
+      "facts": {},
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "value_below_false",
+      "about": "`below` doesn't hold when the value is greater.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "value": "stays_deep",
+                    "below": 0.5
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {
+        "stays_deep": 0.8
+      },
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "fact_is",
+      "about": "`is` holds when the fact equals the name.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_last_side",
+                    "is": "backhand"
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_last_side": "backhand"
+      },
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "fact_is_false",
+      "about": "`is` doesn't hold when the fact is another name.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_last_side",
+                    "is": "backhand"
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_last_side": "forehand"
+      },
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "fact_in",
+      "about": "`in` holds when the fact is one of the list.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "player_position": "right_short"
+      },
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "fact_number_above",
+      "about": "`above` works on a number fact.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "rally_length",
+                    "above": 4
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "rally_length": 6
+      },
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "fact_number_below",
+      "about": "`below` works on a number fact.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "seconds_into_round",
+                    "below": 10
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {
+        "seconds_into_round": 3.5
+      },
+      "expect": {
+        "option": "lob",
+        "by_rule": true
+      }
+    },
+    {
+      "name": "missing_fact_above",
+      "about": "A missing fact never holds for `above`.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "rally_length",
+                    "above": 4
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "missing_fact_below",
+      "about": "A missing fact never holds for `below`.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "rally_length",
+                    "below": 4
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "missing_fact_in",
+      "about": "A missing fact never holds for `in`.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_position",
+                    "in": [
+                      "left_short",
+                      "middle_short",
+                      "right_short"
+                    ]
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "missing_fact_is",
+      "about": "A missing fact doesn't equal a name.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob",
+        "drop"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [
+                  {
+                    "fact": "player_last_side",
+                    "is": "backhand"
+                  }
+                ],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "drop",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "unknown_npc_single_option",
+      "about": "An NPC the behaviour doesn't know picks from the legal options, and no rule decides.",
+      "npc": "ghost",
+      "decision": "shot_type",
+      "legal": [
+        "flat"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "flat",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "unknown_npc",
+      "about": "An NPC the behaviour doesn't know picks one of the legal options with equal chance.",
+      "npc": "ghost",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": [
+              {
+                "if": [],
+                "do": {
+                  "shot_type": "lob"
+                },
+                "why": "test"
+              }
+            ]
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "one_of": [
+          "flat",
+          "lob"
+        ],
+        "by_rule": false
+      }
+    },
+    {
+      "name": "unknown_decision",
+      "about": "A decision the behaviour doesn't list picks one of the legal options with equal chance.",
+      "npc": "opponent",
+      "decision": "spin",
+      "legal": [
+        "top",
+        "back"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "one_of": [
+          "top",
+          "back"
+        ],
+        "by_rule": false
+      }
+    },
+    {
+      "name": "empty_npc_entry",
+      "about": "An empty entry for the NPC counts as unknown.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {}
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "flat",
+        "by_rule": false
+      }
+    },
+    {
+      "name": "all_scores_zero",
+      "about": "When every legal option scores 0, any legal option can come back, and no rule decides.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [
+        "flat",
+        "lob"
+      ],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "one_of": [
+          "flat",
+          "lob"
+        ],
+        "by_rule": false
+      }
+    },
+    {
+      "name": "no_legal_options",
+      "about": "With no legal options, the answer is an empty name.",
+      "npc": "opponent",
+      "decision": "shot_type",
+      "legal": [],
+      "behaviour": {
+        "version": 1,
+        "npcs": {
+          "opponent": {
+            "decisions": {
+              "shot_type": {
+                "flat": {
+                  "base": 0
+                },
+                "lob": {
+                  "base": 0
+                },
+                "drop": {
+                  "base": 1
+                }
+              }
+            },
+            "rules": []
+          }
+        }
+      },
+      "values": {},
+      "facts": {},
+      "expect": {
+        "option": "",
+        "by_rule": false
+      }
+    }
+  ]
+}

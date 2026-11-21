@@ -1,0 +1,73 @@
+{
+  "game": "csgo",
+  "about": "Stand-in for the CS:GO site attack with no screen. The squad sets up at the start of the round. Each exchange the scripted player moves into a part of the map, gets spotted, and the squad reacts. A round ends with a kill.",
+  "npc": "enemies",
+  "plan": {"rounds": 6, "break_every": 3, "break_seconds": 130, "update_seconds": 8},
+  "pacing": {"exchange_seconds": 4, "gap_seconds": 5},
+  "players": {
+    "rusher": {
+      "about": "Runs straight in through main on about 65% of pushes, with a rifle. The counter is to spread out so someone holds main, and to hold when spotted.",
+      "habit": {"event": "entered", "field": "place", "value": "main"},
+      "plays": {
+        "entered": {"place": {"main": 0.65, "mid": 0.15, "flank": 0.1, "site": 0.1}},
+        "kill": {"weapon": {"rifle": 0.6, "pistol": 0.2, "grenade": 0.1, "sniper": 0.05, "knife": 0.05}, "from_behind": {"yes": 0.2, "no": 0.8}}
+      }
+    },
+    "camper": {
+      "about": "Sneaks round the flank on about 60% of rounds and waits with a sniper. The counter is to leave one enemy watching the flank and to push when spotted.",
+      "habit": {"event": "entered", "field": "place", "value": "flank"},
+      "plays": {
+        "entered": {"place": {"flank": 0.6, "mid": 0.2, "main": 0.1, "site": 0.1}},
+        "kill": {"weapon": {"sniper": 0.6, "rifle": 0.3, "pistol": 0.1, "grenade": 0.0, "knife": 0.0}, "from_behind": {"yes": 0.6, "no": 0.4}}
+      }
+    },
+    "even": {
+      "about": "No clear habit. Takes every way in about as often. Nothing to exploit, so adapting should not help here.",
+      "plays": {
+        "entered": {"place": {"main": 0.25, "mid": 0.25, "flank": 0.25, "site": 0.25}},
+        "kill": {"weapon": {"rifle": 0.4, "pistol": 0.2, "sniper": 0.2, "grenade": 0.1, "knife": 0.1}, "from_behind": {"yes": 0.4, "no": 0.6}}
+      }
+    }
+  },
+  "round": {
+    "max_exchanges": 4,
+    "start": {
+      "decisions": ["formation"],
+      "event": {"name": "round_start", "data": {}}
+    },
+    "exchange": {
+      "order": "player_first",
+      "player": {"event": "entered", "data": {}},
+      "npc": {
+        "decisions": ["on_contact", "on_gunfire"],
+        "event": {"name": "spotted", "data": {"place": "$player.place"}}
+      },
+      "facts": {
+        "player_last_seen": "$player.place",
+        "enemies_alive": 4,
+        "seconds_into_round": "$exchange"
+      }
+    }
+  },
+  "outcome": {
+    "player_wins": 0.36,
+    "npc_wins": 0.25,
+    "adjust": [
+      {"player": {"place": "main"}, "npc": {"formation": "spread_out"}, "player_wins": -0.2, "npc_wins": 0.05, "why": "Someone is already holding main."},
+      {"player": {"place": "main"}, "npc": {"on_contact": "hold"}, "player_wins": -0.1, "npc_wins": 0.05, "why": "A rusher runs into a held angle."},
+      {"player": {"place": "main"}, "npc": {"on_contact": "push"}, "player_wins": 0.08, "why": "Pushing into a rusher is a fair fight he likes."},
+      {"player": {"place": "flank"}, "npc": {"formation": "watch_flank"}, "player_wins": -0.25, "npc_wins": 0.05, "why": "The flank is watched."},
+      {"player": {"place": "flank"}, "npc": {"on_contact": "push"}, "player_wins": -0.1, "npc_wins": 0.05, "why": "A sniper is weak up close."},
+      {"player": {"place": "flank"}, "npc": {"on_contact": "hold"}, "player_wins": 0.08, "why": "Holding still against a sniper gets you picked off."},
+      {"player": {"place": ["mid", "site"]}, "npc": {"formation": "all_on_site"}, "player_wins": -0.1, "why": "The whole squad is on site."},
+      {"player": {"place": ["main", "flank"]}, "npc": {"formation": "all_on_site"}, "player_wins": 0.05, "why": "Nobody on the way in."},
+      {"player": {"place": ["main", "mid", "site"]}, "npc": {"on_gunfire": "everyone"}, "player_wins": 0.05, "why": "The whole squad rotates and leaves gaps."}
+    ],
+    "end_events": {
+      "player": {"name": "kill", "data": {"place": "$player.place"}},
+      "npc": {"name": "kill", "data": {"place": "$player.place", "weapon": "rifle", "from_behind": "no"}}
+    },
+    "how": {"player": "all_enemies_down", "npc": "player_died", "long": "time_ran_out"},
+    "stats": {"exchanges": "$exchange"}
+  }
+}

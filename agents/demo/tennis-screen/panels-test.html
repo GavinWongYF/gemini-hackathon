@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Side panels check</title>
+  <!--
+    A stand-in for the game's live view: three columns, with the middle one left empty.
+    The side columns are styled like the game's slots and load panels.js the way the game does.
+
+    Plain address            the panels listen to the live stream on this server
+    ?replay=file&speed=4     play a recorded stream instead, four times as fast
+    ?replay=file&at=45       jump to 45 seconds into the recording and stay there
+    ?width=260               the width of each side column in pixels
+    ?light=1                 white side columns, like the game's live view
+  -->
+  <style>
+    html, body { height: 100%; margin: 0; background: #020617; }
+    .live { display: grid; grid-template-columns: var(--side, 260px) minmax(0, 1fr) var(--side, 260px); height: 100%; }
+    aside {
+      background: #0b1120;
+      padding: 0;   /* the panel brings its own padding */
+      overflow-y: auto;
+      color: #e2e8f0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .light aside { background: #ffffff; color: #141413; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .light aside:first-child { border-right: 1px solid #e5e4df; }
+    .light aside:last-child { border-left: 1px solid #e5e4df; }
+    main { display: grid; place-items: center; color: #334155; font: 13px system-ui, -apple-system, sans-serif; }
+  </style>
+  <script type="module" src="panels.js" async></script>
+</head>
+<body>
+  <div class="live">
+    <aside><npc-panel side="left"></npc-panel></aside>
+    <main id="middle">The game plays here.</main>
+    <aside><npc-panel side="right"></npc-panel></aside>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var width = parseInt(params.get("width"), 10);
+      if (width > 0) document.querySelector(".live").style.setProperty("--side", width + "px");
+      if (params.get("light") === "1") document.querySelector(".live").classList.add("light");
+
+      var file = params.get("replay");
+      if (!file) return;
+      var speed = parseFloat(params.get("speed")) || 1;
+      var at = params.get("at") == null ? null : parseFloat(params.get("at"));
+
+      customElements.whenDefined("npc-panel").then(function () {
+        var panels = window.NpcPanels;
+        panels.manual();
+        return fetch(file).then(function (answer) { return answer.text(); }).then(function (text) {
+          var lines = text.split("\n").map(function (row) {
+            try { return JSON.parse(row); } catch (error) { return null; }
+          }).filter(Boolean);
+          if (at != null) {
+            lines.forEach(function (line) { if ((line.t || 0) <= at) panels.feed(line); });
+            return;
+          }
+          var began = performance.now(), i = 0;
+          (function step() {
+            var now = (performance.now() - began) / 1000 * speed;
+            while (i < lines.length && (lines[i].t || 0) <= now) panels.feed(lines[i++]);
+            if (i < lines.length) setTimeout(step, 50);
+          })();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

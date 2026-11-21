@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game stand-in</title>
+<style>
+  html, body {
+    height: 100%; margin: 0; overflow: hidden;
+    background: #0b0b0c; color: #f1f3f4;
+    font-family: "Google Sans Flex", "Google Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+  main {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; padding: 6vmin;
+  }
+  .tag { font-size: 2vmin; font-weight: 500; color: #9aa0a6; margin-bottom: 2.4vmin; }
+  h1 { margin: 0; font-size: 8vmin; line-height: 1.05; font-weight: 450; letter-spacing: -0.022em; }
+  p { margin: 2.6vmin 0 0; font-size: 2.5vmin; line-height: 1.35; color: #bdc1c6; max-width: 34em; }
+  .meta { font-size: 2vmin; color: #80868b; font-variant-numeric: tabular-nums; }
+  b { font-weight: 500; color: #f1f3f4; }
+</style>
+</head>
+<body>
+<canvas id="court" aria-hidden="true"></canvas>
+<main>
+  <div class="tag">Stand-in</div>
+  <h1>The game goes here</h1>
+  <p>Open the slides once with <b>?game=</b> and the game's address, and the real game loads in this spot.</p>
+  <p class="meta">Running for <b id="t">0</b> s and <b id="f">0</b> frames without a reload. Last key heard here: <b id="k">none</b>.</p>
+  <p class="meta">Press G to go back to the slides.</p>
+</main>
+<script>
+// The one line a real game needs so that G flips back to the slides:
+addEventListener('keydown', e => { if ((e.key === 'g' || e.key === 'G') && parent !== window) parent.postMessage('deck:slides', '*'); });
+
+// Everything below only shows that this page keeps running while the slides are up.
+const t0 = Date.now();
+setInterval(() => {
+  const seconds = Math.round((Date.now() - t0) / 1000);
+  document.getElementById('t').textContent = seconds;
+  document.getElementById('f').textContent = frames;
+  if (parent !== window) parent.postMessage({ standIn: true, seconds, frames }, '*');
+}, 250);
+addEventListener('keydown', e => { document.getElementById('k').textContent = e.key === ' ' ? 'Space' : e.key; });
+
+const cv = document.getElementById('court'), ctx = cv.getContext('2d');
+let W = 0, H = 0, x = 0.3, y = 0.4, vx = 0.21, vy = 0.16, last = 0, frames = 0;
+function size() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', size); size();
+(function draw(ms) {
+  const dt = Math.min(0.05, (ms - last) / 1000 || 0); last = ms; frames++;
+  x += vx * dt; y += vy * dt;
+  if (x < 0.04 || x > 0.96) vx = -vx;
+  if (y < 0.06 || y > 0.94) vy = -vy;
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)'; ctx.lineWidth = 1;
+  const m = Math.min(W, H) * 0.06;
+  ctx.strokeRect(m, m, W - 2 * m, H - 2 * m);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.beginPath(); ctx.arc(x * W, y * H, Math.max(3, Math.min(W, H) * 0.006), 0, Math.PI * 2); ctx.fill();
+  requestAnimationFrame(draw);
+})(0);
+</script>
+</body>
+</html>

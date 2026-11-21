@@ -1,0 +1,1214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adaptive AI enemies for all games</title>
+<!-- Web font with a system fallback, so the page still works with no wifi. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400..600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #121317;
+    --ink-2: #45474d;
+    --ink-3: #5f6368;
+    --ink-4: #9aa0a6;
+    --page: #ffffff;
+    --surface: #f8f9fc;
+    --line: rgba(18, 19, 23, 0.08);
+    --blue: #1a73e8;
+    --red: #ea4335;
+    --yellow: #fbbc04;
+    --font: "Google Sans Flex", "Google Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    cursor: default;
+  }
+  #field { position: fixed; inset: 0; width: 100%; height: 100%; }
+
+  /* The stage is designed at 1920 x 1080 and scaled to fit any screen. */
+  #stage {
+    position: fixed; left: 50%; top: 50%;
+    width: 1920px; height: 1080px;
+    transform: translate(-50%, -50%) scale(var(--s, 1));
+  }
+  .slide {
+    position: absolute; inset: 0;
+    box-sizing: border-box; padding: 92px 120px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center;
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.45s var(--ease), visibility 0s 0.45s;
+  }
+  .slide.active { opacity: 1; visibility: visible; transition: opacity 0.6s var(--ease); }
+
+  /* Anything with data-step appears when the slide reaches that step. */
+  [data-step] {
+    opacity: 0; transform: translateY(26px); filter: blur(10px);
+    transition: opacity 0.7s var(--ease), transform 0.9s var(--ease), filter 0.7s var(--ease);
+    transition-delay: var(--d, 0ms);
+  }
+  [data-step].on { opacity: 1; transform: none; filter: none; }
+
+  /* Headlines come in one word at a time. */
+  .words[data-step] { opacity: 1; transform: none; filter: none; }
+  .words .w {
+    display: inline-block;
+    opacity: 0; transform: translateY(0.35em); filter: blur(8px);
+    transition: opacity 0.6s var(--ease), transform 0.8s var(--ease), filter 0.6s var(--ease);
+    transition-delay: calc(var(--d, 0ms) + var(--i) * 55ms);
+  }
+  .words.on .w { opacity: 1; transform: none; filter: none; }
+
+  .eyebrow {
+    font-size: 26px; font-weight: 500; color: var(--ink-3);
+    display: inline-flex; align-items: center; gap: 14px;
+    margin-bottom: 34px;
+  }
+  .spark {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: conic-gradient(from 210deg, var(--blue), #9b72f2, var(--red), var(--yellow), var(--blue));
+  }
+  h1 {
+    margin: 0;
+    font-size: 92px; line-height: 1.07; font-weight: 450; letter-spacing: -0.022em;
+    white-space: nowrap;
+  }
+  h1.soft { color: var(--ink-4); }
+  /* The headline opens in the middle of the screen, then moves up to make room. */
+  .head { transition: transform 1s var(--ease); }
+  .slide[data-at="0"] .head.rise { transform: translateY(292px) scale(1.12); }
+
+  .cards { display: flex; gap: 40px; margin-top: 72px; }
+  .card { position: relative; width: 800px; text-align: left; }
+  .card::before {
+    content: ""; position: absolute; inset: 6px; border-radius: 40px;
+    background: linear-gradient(115deg, #4285f4, #9b72f2 38%, #ea4335 68%, #fbbc04);
+    filter: blur(34px); opacity: 0;
+    transition: opacity 1.4s var(--ease) 0.25s;
+  }
+  .card.on::before { opacity: 0.22; }
+  .card-body {
+    position: relative;
+    background: var(--page); border: 1px solid var(--line); border-radius: 36px;
+    padding: 40px 48px 38px;
+    height: 100%; box-sizing: border-box;
+  }
+  .label { font-size: 26px; font-weight: 500; color: var(--ink-3); display: flex; align-items: center; gap: 14px; }
+  .num {
+    font-size: 168px; line-height: 1; font-weight: 450; letter-spacing: -0.045em;
+    margin: 18px 0 14px -6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .num small { font-size: 0.56em; letter-spacing: -0.02em; margin-left: 4px; color: var(--ink-3); }
+  .line { font-size: 34px; line-height: 1.2; font-weight: 450; color: var(--ink-2); letter-spacing: -0.01em; text-wrap: balance; min-height: 2.4em; }
+  .src { font-size: 18px; color: var(--ink-4); margin-top: 26px; }
+
+  h1.h80 { font-size: 80px; }
+
+  /* The GTA slide: a looping clip on the left, two short cards on the right. */
+  .gta { display: flex; gap: 40px; width: 1640px; margin-top: 60px; align-items: stretch; }
+  .clip { position: relative; flex: 0 0 900px; min-height: 450px; }
+  .clip::before {
+    content: ""; position: absolute; inset: 6px; border-radius: 40px;
+    background: linear-gradient(115deg, #4285f4, #9b72f2 38%, #ea4335 68%, #fbbc04);
+    filter: blur(34px); opacity: 0; transition: opacity 1.4s var(--ease) 0.25s;
+  }
+  .clip.on::before { opacity: 0.26; }
+  .clip .frame { position: absolute; inset: 0; border-radius: 36px; overflow: hidden; background: #0b0b0c; }
+  .clip video, .clip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .clip .credit { position: absolute; left: 22px; bottom: 16px; font-size: 16px; color: #fff; opacity: 0.78; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); }
+  .clip .note { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #9aa0a6; font-size: 22px; }
+  .clip .note b { font-weight: 500; color: #e8eaed; font-size: 26px; }
+  .clip.missing .note { display: flex; }
+  .clip.missing .credit { display: none; }
+  .gta .side { flex: 1; display: flex; flex-direction: column; gap: 28px; }
+  .gta .side .card { width: auto; flex: 1 1 0; }
+  .gta .side .card-body { padding: 22px 40px 24px; display: flex; flex-direction: column; justify-content: center; }
+  .gta .score { display: flex; align-items: baseline; gap: 26px; }
+  .gta .score .num { font-size: 120px; margin: 0 0 0 -4px; }
+  .gta .score .line { min-height: 0; }
+  .gta .score .src { margin-top: 8px; }
+  .gta .quote { font-size: 68px; margin: 12px 0 14px -2px; }
+  .gta .side .label { font-size: 22px; }
+  .gta .side .praise .line { font-size: 26px; min-height: 0; }
+
+  /* A big quoted phrase inside a card. */
+  .quote { font-size: 104px; line-height: 1; font-weight: 450; letter-spacing: -0.035em; margin: 34px 0 30px -4px; white-space: nowrap; }
+
+  /* A row of equal numbers with hairlines between them. */
+  .stats { display: flex; width: 1680px; margin-top: 60px; }
+  .stat { flex: 1 1 0; min-width: 0; padding: 6px 16px; border-left: 1px solid var(--line); }
+  .stat:first-child { border-left: 0; }
+  .stat .n { font-size: 92px; line-height: 1; font-weight: 450; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .stat .l { font-size: 30px; line-height: 1.2; font-weight: 450; color: var(--ink-2); margin-top: 20px; }
+
+  /* A card that carries one short point. */
+  .badge { width: 46px; height: 46px; border-radius: 50%; background: var(--ink); color: #fff; display: grid; place-items: center; font-size: 22px; font-weight: 500; }
+  .point { font-size: 68px; line-height: 1.06; font-weight: 450; letter-spacing: -0.028em; margin: 30px 0 6px; text-wrap: balance; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 12px; margin-top: 28px;
+    padding: 13px 22px; border-radius: 9999px; background: var(--surface); border: 1px solid var(--line);
+    font-size: 24px; font-weight: 500; color: var(--ink);
+  }
+  .tag .spark { width: 11px; height: 11px; }
+  .tags { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 28px; }
+  .tags .tag { margin-top: 0; }
+
+  /* The chart. One series, so one colour. Text stays in the ink colours. */
+  .chart { width: 1680px; margin-top: 44px; }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart text { font-family: var(--font); }
+  .chart .grid { stroke: var(--ink); stroke-opacity: 0.08; stroke-width: 1; }
+  .chart .base { stroke: var(--ink); stroke-opacity: 0.28; stroke-width: 1; }
+  .chart .axis { font-size: 18px; fill: var(--ink-4); }
+  .chart .cap { font-size: 20px; fill: var(--ink-3); }
+  .chart .ln { fill: none; stroke: var(--blue); stroke-width: 2; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 1.5s var(--ease) 0.5s; }
+  .chart.on .ln { stroke-dashoffset: 0; }
+  .chart .pt { opacity: 0; transition: opacity 0.6s var(--ease); transition-delay: calc(0.6s + var(--i) * 0.22s); }
+  .chart.on .pt { opacity: 1; }
+  .chart .bub { fill: #e8f0fe; stroke: var(--blue); stroke-width: 2; }
+  .chart .ring { fill: #fff; stroke: #fff; stroke-width: 4; }
+  .chart .dot { fill: var(--blue); }
+  .chart .val { font-size: 30px; font-weight: 500; fill: var(--ink); text-anchor: middle; }
+  .chart .name { font-size: 26px; font-weight: 500; fill: var(--ink); text-anchor: middle; }
+  .chart .name tspan { font-weight: 400; fill: var(--ink-4); }
+  .chart .npc { font-size: 20px; fill: var(--ink-2); text-anchor: middle; }
+  .chart .cost { font-size: 20px; fill: var(--ink-3); text-anchor: middle; }
+
+  h1.h64 { font-size: 64px; }
+
+  /* The recorded clip slide: one big player. */
+  .clip.wide { flex: none; width: 1240px; height: 698px; min-height: 0; margin-top: 32px; }
+
+  /* The architecture diagram: the game on the left, the three agent jobs on the right. */
+  .arch { position: relative; width: 1680px; height: 568px; margin-top: 34px; text-align: left; }
+  .arch .col { position: absolute; top: 0; font-size: 22px; font-weight: 500; color: var(--ink); }
+  .arch .col span { color: var(--ink-3); font-weight: 400; margin-left: 10px; }
+  .arch .box { position: absolute; box-sizing: border-box; height: 160px; background: var(--page); border: 1px solid var(--line); border-radius: 28px; padding: 24px 30px; }
+  .arch .game { left: 0; width: 400px; }
+  .arch .job { left: 800px; width: 880px; }
+  .arch .r1 { top: 40px; } .arch .r2 { top: 224px; } .arch .r3 { top: 408px; }
+  .arch .t { font-size: 30px; font-weight: 500; letter-spacing: -0.01em; display: flex; align-items: center; gap: 14px; }
+  .arch .d { font-size: 22px; line-height: 1.3; color: var(--ink-2); margin-top: 12px; text-wrap: balance; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 500; letter-spacing: 0; padding: 6px 14px; border-radius: 9999px; background: var(--surface); border: 1px solid var(--line); }
+  .chip i { width: 9px; height: 9px; border-radius: 50%; }
+  .arch .when { margin-left: auto; font-size: 18px; font-weight: 400; letter-spacing: 0; color: var(--ink-3); }
+  .arch > svg { position: absolute; left: 400px; top: 0; width: 400px; height: 568px; overflow: visible; }
+  .arch .wire { fill: none; stroke: var(--ink); stroke-opacity: 0.4; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 10; animation: flow 0.9s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -12; } }
+  .arch .tip { fill: none; stroke: var(--ink); stroke-opacity: 0.55; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .arch .msg { font-family: var(--font); font-size: 18px; fill: var(--ink-3); text-anchor: middle; }
+  .still .arch .wire { animation: none; }
+
+  /* The slide where a game drops into our software. */
+  .arch.plug { height: 400px; }
+  .arch.plug > svg { left: 320px; width: 480px; height: 430px; }
+  /* What the game sends, as small labelled chips sitting on the two arrows. */
+  .plug .ins { position: absolute; left: 320px; width: 480px; text-align: center; }
+  .plug .ins.one { top: 34px; }
+  .plug .ins.live { top: 220px; }
+  .plug .ilabel { font-size: 20px; line-height: 1.2; font-weight: 500; color: var(--ink); }
+  .plug .ilabel span { font-weight: 400; color: var(--ink-3); margin-left: 8px; }
+  .plug .irow { display: flex; justify-content: center; gap: 8px; margin-top: 10px; }
+  .plug .irow.below { margin-top: 30px; }
+  .plug .ins .chip { font-size: 16px; padding: 5px 12px; gap: 7px; background: var(--page); }
+  .plug .ins .chip .ico { color: var(--ink-3); }
+  .arch .msg.b { font-weight: 500; fill: var(--ink); }
+  .plug .slot, .plug .tile { position: absolute; left: 0; top: 40px; width: 320px; height: 344px; box-sizing: border-box; border-radius: 28px; }
+  .plug .slot { border: 2px dashed rgba(18, 19, 23, 0.22); display: grid; place-items: center; font-size: 22px; color: var(--ink-4); }
+  .plug .tile { background: #0b0b0c; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22); }
+  /* Anything with this class drops in from above and settles with a small bounce. */
+  .dropin[data-step] {
+    transform: translateY(-150px) rotate(-7deg); filter: none;
+    transition: opacity 0.3s var(--ease), transform 0.9s cubic-bezier(0.3, 1.35, 0.5, 1);
+    transition-delay: var(--d, 0ms);
+  }
+  .dropin[data-step].on { transform: none; }
+
+  /* The "how the opponent adapts" slide: the game on the left, the two loops on the right. */
+  .arch.flow { height: 430px; }
+  .flow .tile { height: 376px; }
+  .flow .ins.live { top: 44px; }
+  .flow .ins.back { top: 350px; }
+  .flow .box { display: flex; align-items: center; gap: 26px; }
+  .flow .box .bx { flex: 1; min-width: 0; }
+  .flow .box .d { margin-top: 10px; }
+  .flow .r2 { top: 256px; }
+  .flow .down { position: absolute; left: 866px; top: 204px; height: 48px; display: flex; align-items: center; gap: 10px; font-size: 18px; color: var(--ink-3); }
+  .flow .down .ico { font-size: 22px; transform: rotate(90deg); }
+
+  /* The "what the developer defines" slide: four inputs, with one line for each game. */
+  .games { display: flex; justify-content: center; gap: 14px; margin-top: 34px; height: 52px; }
+  .gpill { display: inline-flex; align-items: center; gap: 10px; height: 52px; box-sizing: border-box; padding: 0 24px; border-radius: 9999px; background: #0b0b0c; color: #fff; font-size: 24px; font-weight: 500; }
+  .gpill .ico { font-size: 22px; opacity: 0.8; }
+  .inputs { gap: 28px; margin-top: 36px; }
+  .inputs .card { width: 399px; }
+  .inputs .card-body { padding: 30px 30px 30px; }
+  .ctitle { font-size: 31px; line-height: 1.15; font-weight: 500; letter-spacing: -0.012em; margin: 22px 0 4px; }
+  .ex { margin-top: 18px; font-size: 22px; line-height: 1.3; color: var(--ink-2); min-height: 4.1em; }
+  .ex b { display: block; font-size: 18px; font-weight: 500; color: var(--ink); margin-bottom: 2px; }
+  .explain .ico { margin-right: 0.4em; vertical-align: -0.14em; color: var(--ink-3); }
+  .plug .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .plug .tname { position: absolute; left: 26px; bottom: 20px; font-size: 30px; font-weight: 500; color: #fff; }
+
+  /* The loops slide. Each ring turns at the speed of its loop. */
+  .loops { gap: 40px; margin-top: 52px; }
+  .loops .card { width: 700px; }
+  .loops .card-body { padding: 32px 36px 34px; }
+  .lhead { display: flex; align-items: center; gap: 22px; }
+  .loop { position: relative; width: 104px; height: 104px; flex: none; display: grid; place-items: center; font-size: 38px; color: var(--ink); }
+  .loop .ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; animation: spin var(--t, 4s) linear infinite; }
+  .loop .ring circle, .loop .ring path { fill: none; stroke: var(--c); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .loop .ring circle { stroke-dasharray: 226 76; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .still .loop .ring { animation: none; }
+  .lwhen { font-size: 24px; font-weight: 500; color: var(--ink); line-height: 1.25; }
+  .lwhen span { display: block; font-size: 20px; font-weight: 400; color: var(--ink-3); }
+  .ltitle { font-size: 44px; line-height: 1.08; font-weight: 450; letter-spacing: -0.02em; margin: 26px 0 16px; }
+  .loops .line { font-size: 26px; min-height: 0; margin-top: 18px; }
+
+  /* Icons. Each number or point gets one that stands for what it is about. */
+  .ico { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .ic {
+    display: inline-grid; place-items: center; flex: none;
+    width: 64px; height: 64px; border-radius: 50%; font-size: 30px;
+    background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+  }
+  .ic.lg { width: 84px; height: 84px; font-size: 40px; }
+  .ic.sm { width: 46px; height: 46px; font-size: 22px; }
+  .stat .ic { width: 80px; height: 80px; font-size: 38px; margin-bottom: 26px; }
+  .line > .ico { margin-right: 0.35em; vertical-align: -0.14em; color: var(--ink-3); }
+
+  /* The two loops slide: the game, a small fast ring and a large slow ring. */
+  .duo { position: relative; width: 1680px; height: 580px; margin-top: 30px; }
+  .duo > svg.lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .duo .wire, .api .wire { fill: none; stroke: var(--ink); stroke-opacity: 0.4; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 10; animation: flow 0.9s linear infinite; }
+  .duo .tip, .api .tip { fill: none; stroke: var(--ink); stroke-opacity: 0.55; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .duo .msg, .api .msg { font-family: var(--font); font-size: 20px; fill: var(--ink-3); text-anchor: middle; }
+  .still .duo .wire, .still .api .wire { animation: none; }
+  .gtile { position: absolute; box-sizing: border-box; border-radius: 28px; background: #0b0b0c; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22); }
+  .gtile svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .gtile .tname { position: absolute; left: 24px; bottom: 18px; font-size: 28px; font-weight: 500; color: #fff; }
+  .duo .gtile { left: 60px; top: 20px; width: 300px; height: 360px; }
+  .orb { position: absolute; display: grid; place-items: center; color: var(--ink); }
+  .orb .ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; animation: spin var(--t, 4s) linear infinite; }
+  .orb .ring circle, .orb .ring path { fill: none; stroke: var(--c); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+  .still .orb .ring { animation: none; }
+  .orb.fast { left: 640px; top: 90px; width: 220px; height: 220px; font-size: 76px; }
+  .orb.slow { left: 1190px; top: 40px; width: 320px; height: 320px; font-size: 104px; }
+  .cap { position: absolute; top: 392px; text-align: center; }
+  .cap.fast { left: 520px; width: 460px; }
+  .cap.slow { left: 1110px; width: 480px; }
+  .cap .t { font-size: 32px; font-weight: 500; letter-spacing: -0.01em; display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .cap .d { font-size: 24px; line-height: 1.3; color: var(--ink-2); margin-top: 12px; }
+  .cap .e { font-size: 20px; color: var(--ink-3); margin-top: 6px; }
+  .explain.tight { margin-top: 30px; }
+
+  /* The developer slide: a game drops into our software, and setup runs once. */
+  .api { position: relative; width: 1680px; margin-top: 44px; box-sizing: border-box; text-align: left; border: 1px solid var(--line); border-radius: 40px; background: var(--surface); padding: 28px 40px 40px; }
+  .api .shell { font-size: 22px; font-weight: 500; color: var(--ink-3); display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .api .row { display: flex; align-items: stretch; }
+  .api .slot { position: relative; flex: none; width: 250px; height: 300px; border-radius: 28px; border: 2px dashed rgba(18, 19, 23, 0.22); box-sizing: border-box; }
+  .api .slot .gtile { inset: -2px; }
+  .api .pane { box-sizing: border-box; background: var(--page); border: 1px solid var(--line); border-radius: 28px; padding: 28px 32px; display: flex; flex-direction: column; justify-content: center; }
+  .api .pane.dev { flex: none; width: 500px; margin-left: 40px; }
+  .api .pane.us { flex: 1; min-width: 0; }
+  .api .ph { font-size: 28px; font-weight: 500; letter-spacing: -0.01em; display: flex; align-items: center; gap: 14px; }
+  .api .it { display: flex; gap: 16px; align-items: flex-start; font-size: 24px; line-height: 1.3; color: var(--ink-2); margin-top: 22px; }
+  .api .it > .ico { font-size: 28px; color: var(--ink-3); margin-top: 2px; }
+  .api .it > div { text-wrap: balance; }
+  .api .it b { font-weight: 500; color: var(--ink); }
+  .api .it .when { display: block; font-size: 18px; color: var(--ink-3); margin-bottom: 4px; }
+  .api .link { flex: none; width: 190px; position: relative; }
+  .api .link svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+
+  /* The proof slide: two numbers with an arrow between them. */
+  .versus { align-items: center; justify-content: center; margin-top: 56px; }
+  .versus .card { width: 640px; }
+  .versus .arrow { display: grid; font-size: 60px; color: var(--ink-4); }
+  .explain { font-size: 32px; line-height: 1.25; font-weight: 450; color: var(--ink-2); margin-top: 48px; }
+
+  .pill {
+    margin-top: 64px;
+    display: inline-flex; align-items: center; gap: 18px;
+    background: var(--ink); color: #fff;
+    border-radius: 9999px; padding: 24px 46px;
+    font-size: 34px; font-weight: 500; letter-spacing: -0.01em;
+  }
+  .pill .spark { width: 16px; height: 16px; }
+
+  .big { font-size: 220px; line-height: 1; font-weight: 450; letter-spacing: -0.04em; margin: 0; }
+  .sub { font-size: 40px; line-height: 1.25; font-weight: 450; color: var(--ink-2); margin-top: 34px; }
+
+  #dots { position: fixed; left: 28px; bottom: 24px; display: flex; gap: 8px; }
+  #dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); opacity: 0.16; transition: opacity 0.3s; }
+  #dots i.on { opacity: 0.7; }
+  #hint {
+    position: fixed; right: 28px; bottom: 18px;
+    font-size: 13px; color: var(--ink-4);
+    transition: opacity 1s; pointer-events: none;
+  }
+  /* The game layer. It loads once, sits over the slides, and stays loaded while hidden. */
+  #stage, #dots { transition: opacity 0.4s var(--ease); }
+  /* Hidden with opacity only. Chrome stops drawing a frame that is visibility: hidden or
+     display: none, and that would pause the game while the slides are up. */
+  #game {
+    position: fixed; inset: 0; z-index: 5; width: 100%; height: 100%; border: 0; background: #0b0b0c;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.5s var(--ease);
+  }
+  .game-on #game { opacity: 1; pointer-events: auto; }
+  .game-on #stage, .game-on #dots, .game-on #hint { opacity: 0 !important; }
+  /* A way back that works with the mouse: hover the top right corner of the game. */
+  #corner {
+    position: fixed; top: 0; right: 0; z-index: 6; width: 190px; height: 76px;
+    display: none; justify-content: flex-end; align-items: flex-start;
+    padding: 16px 18px; box-sizing: border-box;
+  }
+  .game-on #corner { display: flex; }
+  #back {
+    font: 500 14px/1 var(--font); color: var(--ink); background: #fff;
+    border: 1px solid var(--line); border-radius: 9999px; padding: 10px 16px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2); cursor: pointer;
+    opacity: 0; transform: translateY(-6px); transition: opacity 0.25s, transform 0.25s;
+  }
+  #corner:hover #back, #back:focus-visible { opacity: 1; transform: none; }
+  #back span { color: var(--ink-4); margin-left: 8px; }
+  /* Racket and camera buttons in the game view. They call the game's own input code,
+     so they only show when the game is served from the same address as the slides. */
+  #hw {
+    position: fixed; left: 16px; bottom: 52px; z-index: 6;
+    display: none; flex-direction: column; align-items: flex-start; gap: 6px;
+    font: 500 13px/1 var(--font); white-space: nowrap;
+    transition: opacity 0.3s;
+  }
+  .game-on #hw.ready { display: flex; }
+  /* Once the racket is connected and zeroed the buttons step back until the mouse is on them. */
+  #hw.quiet { opacity: 0.4; }
+  #hw.quiet:hover { opacity: 1; }
+  #hw button {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; color: var(--ink); background: #fff;
+    border: 1px solid var(--line); border-radius: 9999px; padding: 10px 15px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2); cursor: pointer;
+  }
+  #hw button[hidden] { display: none; }
+  #hw button.plain { color: var(--ink-3); }
+  #hw button.call { background: var(--ink); color: #fff; border-color: var(--ink); }
+  #hw .dot { width: 8px; height: 8px; border-radius: 50%; background: #c4c7cc; flex: none; }
+  #hw .on .dot { background: #1e8e3e; }
+  #hw .busy .dot { background: var(--yellow); animation: hw-pulse 0.9s ease-in-out infinite; }
+  #hw .bad .dot { background: var(--red); }
+  #hw-note {
+    color: var(--ink-2); background: #fff; border: 1px solid var(--line); border-radius: 9999px;
+    padding: 10px 15px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+    white-space: normal; max-width: 196px; border-radius: 14px; line-height: 1.35;
+  }
+  #hw-note:empty { display: none; }
+  @keyframes hw-pulse { 50% { opacity: 0.3; } }
+
+  .still [data-step], .still .words .w, .still .slide, .still .card::before, .still .clip::before, .still .head, .still #game, .still #stage, .still #dots, .still .chart .ln, .still .chart .pt { transition: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    [data-step], .words .w, .slide, .card::before { transition-duration: 0.01s !important; transition-delay: 0s !important; }
+  }
+</style>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+
+<!-- Line icons, drawn once here and reused on the slides. Shapes from the open-source Lucide set. -->
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+    <symbol id="i-thumb" viewBox="0 0 24 24"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-dollar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24"><line x1="6" x2="10" y1="12" y2="12"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="15" x2="15.01" y1="13" y2="13"/><line x1="18" x2="18.01" y1="11" y2="11"/><rect width="20" height="12" x="2" y="6" rx="2"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24"><path d="m12.99 6.74 1.93 3.44"/><path d="M19.136 12a10 10 0 0 1-14.271 0"/><path d="m21 21-2.16-3.84"/><path d="m3 21 8.02-14.26"/><circle cx="12" cy="5" r="2"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-ask" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+  </defs>
+</svg>
+
+<!--
+  The words come from the team's Notion page "Pitch Info". To change them, edit the slides below.
+  data-step="0" shows as soon as the slide opens, "1" after one press, and so on.
+  G switches between the slides and the game. The game loads once and keeps running, and the slides stay on the slide you left.
+  The one exception is a slide with data-after-game="next": coming back from the game lands on the slide after it.
+-->
+<main id="stage">
+
+  <!-- 1. GTA VI. The clip is optional: put gta6.mp4, gta6.webm or gta6.gif in the media folder. -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>Adaptive AI enemies for all games</div>
+    <h1 class="words" data-step="0" style="--d: 150ms">GTA VI just became</h1>
+    <h1 class="words" data-step="0" style="--d: 500ms">the highest-rated game ever.</h1>
+
+    <div class="gta">
+      <div class="clip" data-step="0" data-src="media/gta6" style="--d: 300ms">
+        <div class="frame">
+          <video muted loop playsinline preload="auto"></video>
+          <div class="note"><b>GTA VI clip goes here</b><span>media/gta6.mp4</span></div>
+          <div class="credit">Grand Theft Auto VI, Rockstar Games</div>
+        </div>
+      </div>
+      <div class="side">
+        <div class="card" data-step="0" style="--d: 1300ms">
+          <div class="card-body score">
+            <div class="num"><span class="count" data-to="99">99</span><small>/100</small></div>
+            <div class="line"><svg class="ico"><use href="#i-star"/></svg>on Metacritic</div>
+            <div class="src">152 critic reviews, PS5, 21 Nov 2026</div>
+          </div>
+        </div>
+        <div class="card praise" data-step="0" style="--d: 1520ms">
+          <div class="card-body">
+            <div class="label"><svg class="ico"><use href="#i-thumb"/></svg>What reviewers praise</div>
+            <div class="quote">Dynamic NPCs</div>
+            <div class="line">A world that keeps producing discoveries after dozens of hours</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. What it took -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>What it took</div>
+    <h1 class="words" data-step="0" style="--d: 150ms">But building this by hand</h1>
+    <h1 class="words" data-step="0" style="--d: 550ms">took incredible resources.</h1>
+
+    <div class="stats">
+      <div class="stat" data-step="0" style="--d: 1100ms">
+        <div class="ic"><svg class="ico"><use href="#i-bot"/></svg></div>
+        <div class="n"><span class="count" data-to="30000">30,000</span></div>
+        <div class="l">unique NPCs</div>
+      </div>
+      <div class="stat" data-step="0" style="--d: 1250ms">
+        <div class="ic"><svg class="ico"><use href="#i-film"/></svg></div>
+        <div class="n"><span class="count" data-to="600000">600,000</span></div>
+        <div class="l">NPC animations</div>
+      </div>
+      <div class="stat" data-step="0" style="--d: 1400ms">
+        <div class="ic"><svg class="ico"><use href="#i-users"/></svg></div>
+        <div class="n"><span class="count" data-to="4700">4,700</span></div>
+        <div class="l">people at Rockstar</div>
+      </div>
+      <div class="stat" data-step="0" style="--d: 1550ms">
+        <div class="ic"><svg class="ico"><use href="#i-dollar"/></svg></div>
+        <div class="n">$1B+</div>
+        <div class="l">estimated budget</div>
+      </div>
+    </div>
+    <div class="src" data-step="0" style="--d: 1900ms">Sources: New York Times Magazine, GamesRadar+, Bloomberg</div>
+  </section>
+
+  <!-- 3. The chart: Rockstar's open worlds, 2001 to 2026 -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>Rockstar's open worlds, 2001 to 2026</div>
+    <h1 class="words h80" data-step="0" style="--d: 150ms">Every leap in NPC reactivity</h1>
+    <h1 class="words h80 soft" data-step="0" style="--d: 550ms">took longer to build by hand.</h1>
+
+    <div class="chart" data-step="0" style="--d: 900ms">
+      <svg viewBox="0 0 1680 556" role="img" aria-label="Years from first work to release for five Rockstar games, rising from 2.5 years for GTA III to 11 years for GTA VI, with the team growing from 23 to about 4,700 people.">
+        <text class="cap" x="0" y="26">Years from first work to release. Bubble size shows team size.</text>
+        <line class="grid" x1="0" x2="1680" y1="140" y2="140"/>
+        <line class="grid" x1="0" x2="1680" y1="270" y2="270"/>
+        <line class="base" x1="0" x2="1680" y1="400" y2="400"/>
+        <text class="axis" x="0" y="132">10 yrs</text>
+        <text class="axis" x="0" y="262">5 yrs</text>
+        <path class="ln" pathLength="1" d="M168,335 L504,309 L840,270 L1176,192 L1512,114"/>
+
+        <g class="pt" style="--i: 0">
+          <title>GTA III (2001): 2.5 years, about 23 core developers</title>
+          <circle class="ring" cx="168" cy="335" r="8"/><circle class="bub" cx="168" cy="335" r="8"/><circle class="dot" cx="168" cy="335" r="4"/>
+          <text class="val" x="168" y="309">2.5 yrs</text>
+          <text class="name" x="168" y="446">GTA III <tspan>2001</tspan></text>
+          <text class="npc" x="168" y="480">Scripted paths</text>
+          <text class="cost" x="168" y="510">23 core devs</text>
+        </g>
+        <g class="pt" style="--i: 1">
+          <title>GTA IV (2008): 3.5 years, more than 1,000 people</title>
+          <circle class="ring" cx="504" cy="309" r="28"/><circle class="bub" cx="504" cy="309" r="28"/><circle class="dot" cx="504" cy="309" r="4"/>
+          <text class="val" x="504" y="263">3.5 yrs</text>
+          <text class="name" x="504" y="446">GTA IV <tspan>2008</tspan></text>
+          <text class="npc" x="504" y="480">Physics-driven reactions</text>
+          <text class="cost" x="504" y="510">1,000+ people</text>
+        </g>
+        <g class="pt" style="--i: 2">
+          <title>GTA V (2013): about 5 years from concept, more than 1,000 people, 55,000 animations</title>
+          <circle class="ring" cx="840" cy="270" r="29"/><circle class="bub" cx="840" cy="270" r="29"/><circle class="dot" cx="840" cy="270" r="4"/>
+          <text class="val" x="840" y="223">5 yrs</text>
+          <text class="name" x="840" y="446">GTA V <tspan>2013</tspan></text>
+          <text class="npc" x="840" y="480">55,000 animations</text>
+          <text class="cost" x="840" y="510">1,000+ people</text>
+        </g>
+        <g class="pt" style="--i: 3">
+          <title>Red Dead Redemption 2 (2018): about 8 years, about 2,000 people, 300,000 animations</title>
+          <circle class="ring" cx="1176" cy="192" r="40"/><circle class="bub" cx="1176" cy="192" r="40"/><circle class="dot" cx="1176" cy="192" r="4"/>
+          <text class="val" x="1176" y="134">8 yrs</text>
+          <text class="name" x="1176" y="446">Red Dead 2 <tspan>2018</tspan></text>
+          <text class="npc" x="1176" y="480">300,000 animations</text>
+          <text class="cost" x="1176" y="510">about 2,000 people</text>
+        </g>
+        <g class="pt" style="--i: 4">
+          <title>GTA VI (2026): 11 years from the first research trips in 2015, 8 in full production, about 4,700 people, more than 600,000 animations</title>
+          <circle class="ring" cx="1512" cy="114" r="62"/><circle class="bub" cx="1512" cy="114" r="62"/><circle class="dot" cx="1512" cy="114" r="4"/>
+          <text class="val" x="1512" y="34">11 yrs</text>
+          <text class="name" x="1512" y="446">GTA VI <tspan>2026</tspan></text>
+          <text class="npc" x="1512" y="480">600,000+ animations</text>
+          <text class="cost" x="1512" y="510">about 4,700 people</text>
+        </g>
+        <text class="axis" x="840" y="550" text-anchor="middle">Sources: Rockstar, Bloomberg, Vulture, Guinness World Records, developer interviews</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- 4. What we're building, and what it does for gamers and for devs -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>What we're building</div>
+    <h1 class="words" data-step="0" style="--d: 150ms">So we're using Gemini 4 to build</h1>
+    <h1 class="words" data-step="0" style="--d: 600ms">next-generation, reactive NPCs.</h1>
+
+    <div class="cards">
+      <div class="card" data-step="0" style="--d: 1200ms">
+        <div class="card-body">
+          <div class="label"><span class="ic sm"><svg class="ico"><use href="#i-gamepad"/></svg></span>For gamers</div>
+          <div class="num"><span class="count" data-to="78">78</span><small>%</small></div>
+          <div class="line">say they'd spend more time playing games with advanced AI NPCs</div>
+          <div class="tags">
+            <div class="tag"><svg class="ico"><use href="#i-globe"/></svg>Makes games more immersive</div>
+            <div class="tag"><svg class="ico"><use href="#i-heart"/></svg>Makes gamers want to keep playing</div>
+          </div>
+          <div class="src">Inworld AI survey of 1,002 US gamers</div>
+        </div>
+      </div>
+      <div class="card" data-step="0" style="--d: 1420ms">
+        <div class="card-body">
+          <div class="label"><span class="ic sm"><svg class="ico"><use href="#i-code"/></svg></span>For devs</div>
+          <div class="num"><span class="count" data-to="20">20</span><small>%</small></div>
+          <div class="line">fewer players drop off after week one when the game adapts to them</div>
+          <div class="tags">
+            <div class="tag"><svg class="ico"><use href="#i-clock"/></svg>Drastically reduces dev time</div>
+            <div class="tag"><svg class="ico"><use href="#i-repeat"/></svg>Improves player retention</div>
+          </div>
+          <div class="src">Randomized test with 29,302 players. KDD 2021</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. The live demo's title card. -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>Live demo</div>
+    <h1 class="words soft" data-step="0" style="--d: 150ms">Let's start with</h1>
+    <h1 class="big words" data-step="0" style="--d: 450ms">Tennis</h1>
+  </section>
+
+  <!-- 6. How the opponent adapts: what the game streams, and the two loops. This is the slide right before the tennis game.
+       Press G from here to play. Coming back from the game lands on this slide again, for the explanation. -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>How the opponent adapts</div>
+    <h1 class="words h80" data-step="0" style="--d: 150ms">We use two loops</h1>
+    <h1 class="words h80 soft" data-step="0" style="--d: 500ms">to continually update NPC behavior.</h1>
+
+    <div class="duo">
+      <div class="gtile" data-step="0" style="--d: 900ms">
+        <svg viewBox="0 0 320 376" aria-hidden="true">
+          <g fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="2">
+            <rect x="74" y="40" width="172" height="240"/>
+            <path d="M96,40 V280 M224,40 V280 M96,100 H224 M96,220 H224 M160,100 V220"/>
+          </g>
+          <path d="M60,160 H260" stroke="#fff" stroke-opacity="0.95" stroke-width="3"/>
+          <path d="M132,254 Q148,176 196,126" fill="none" stroke="#fbbc04" stroke-opacity="0.6" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round"/>
+          <circle cx="196" cy="126" r="6" fill="#fbbc04"/>
+          <circle cx="130" cy="260" r="8" fill="#fff"/>
+          <circle cx="188" cy="62" r="8" fill="#4285f4"/>
+        </svg>
+        <div class="tname">Tennis</div>
+      </div>
+
+      <div class="orb fast" data-step="0" style="--d: 1500ms; --t: 1.6s; --c: #1a73e8">
+        <svg class="ring" viewBox="0 0 220 220" aria-hidden="true"><circle cx="110" cy="110" r="106" stroke-dasharray="500 166"/><path d="M108,-7 L119,4 L108,15"/></svg>
+        <svg class="ico"><use href="#i-eye"/></svg>
+      </div>
+      <div class="cap fast" data-step="0" style="--d: 1600ms">
+        <div class="t">Fast loop <span class="chip"><i style="background: #1a73e8"></i>Decisions API</span></div>
+        <div class="d">Reads the game and the player</div>
+        <div class="e">every second or two</div>
+      </div>
+
+      <div class="orb slow" data-step="0" style="--d: 2300ms; --t: 12s; --c: #ea4335">
+        <svg class="ring" viewBox="0 0 320 320" aria-hidden="true"><circle cx="160" cy="160" r="156" stroke-dasharray="735 245"/><path d="M158,-7 L170,4 L158,15"/></svg>
+        <svg class="ico"><use href="#i-pen"/></svg>
+      </div>
+      <div class="cap slow" data-step="0" style="--d: 2400ms">
+        <div class="t">Slow loop <span class="chip"><i style="background: #ea4335"></i>Gemini 4 Neon</span></div>
+        <div class="d">Rewrites the opponent's strategy</div>
+        <div class="e">every 15 to 20 seconds</div>
+      </div>
+
+      <svg class="lines" viewBox="0 0 1680 580" aria-hidden="true">
+        <g data-step="0" style="--d: 1300ms">
+          <path class="wire" d="M380,200 L618,200"/><path class="tip" d="M610,193 L620,200 L610,207"/>
+          <text class="msg" x="500" y="176">game state, shots, frames</text>
+        </g>
+        <g data-step="0" style="--d: 2100ms">
+          <path class="wire" d="M882,200 L1168,200"/><path class="tip" d="M1160,193 L1170,200 L1160,207"/>
+          <text class="msg" x="1026" y="176">live profile of the player</text>
+        </g>
+        <g data-step="0" style="--d: 3000ms">
+          <path class="wire" d="M1530,200 L1610,200 Q1630,200 1630,220 L1630,520 Q1630,540 1610,540 L230,540 Q210,540 210,520 L210,402"/>
+          <path class="tip" d="M203,410 L210,400 L217,410"/>
+          <text class="msg" x="920" y="568">new strategy for the opponent</text>
+        </g>
+      </svg>
+    </div>
+    <div class="explain tight" data-step="0" style="--d: 3500ms">The game picks every move itself, so it never waits on a model.</div>
+  </section>
+
+  <!-- 7. What a developer defines to add a game. This is the slide right before the CS:GO clip.
+       It opens with the tennis lines. One press drops CS:GO in and shows its lines. -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>Proof it works</div>
+    <h1 class="words soft" data-step="0" style="--d: 150ms">Let's try it on</h1>
+    <h1 class="big words" data-step="0" style="--d: 450ms">a shooter</h1>
+    <div class="explain" data-step="0" style="--d: 1100ms">A new, open-source game we downloaded from the Internet.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>API for developers</div>
+    <h1 class="words h80" data-step="0" style="--d: 150ms">Drop in any game.</h1>
+    <h1 class="words h80 soft" data-step="0" style="--d: 500ms">Setup runs once.</h1>
+
+    <div class="api" data-step="0" style="--d: 800ms">
+      <div class="shell"><span class="spark"></span>Adaptive NPC</div>
+      <div class="row">
+        <div class="slot">
+          <div class="gtile dropin" data-step="0" style="--d: 1400ms">
+            <svg viewBox="0 0 250 300" aria-hidden="true">
+              <g fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="2">
+                <rect x="34" y="30" width="182" height="200" rx="6"/>
+                <path d="M34,124 H96 M154,124 H216"/>
+                <rect x="66" y="58" width="36" height="22"/><rect x="150" y="152" width="30" height="30"/>
+              </g>
+              <path d="M125,212 Q116,164 140,130" fill="none" stroke="#fbbc04" stroke-opacity="0.6" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round"/>
+              <circle cx="125" cy="218" r="8" fill="#fff"/>
+              <circle cx="86" cy="100" r="7" fill="#ea4335"/><circle cx="160" cy="68" r="7" fill="#ea4335"/><circle cx="188" cy="104" r="7" fill="#ea4335"/>
+            </svg>
+            <div class="tname">Shooter</div>
+          </div>
+        </div>
+        <div class="pane dev" data-step="0" style="--d: 2100ms">
+          <div class="ph"><span class="ic sm"><svg class="ico"><use href="#i-code"/></svg></span>Game devs hand over</div>
+          <div class="it"><svg class="ico"><use href="#i-list"/></svg><div>A <b>JSON description</b> of the game</div></div>
+          <div class="it"><svg class="ico"><use href="#i-sliders"/></svg><div>The <b>NPC behavior</b> Gemini may tune</div></div>
+        </div>
+        <div class="link" data-step="0" style="--d: 2600ms">
+          <svg viewBox="0 0 190 300" aria-hidden="true"><path class="wire" d="M14,150 L172,150"/><path class="tip" d="M166,143 L176,150 L166,157"/><text class="msg" x="95" y="126">One-time setup</text></svg>
+        </div>
+        <div class="pane us" data-step="0" style="--d: 3000ms">
+          <div class="ph"><span class="ic sm"><svg class="ico"><use href="#i-bot"/></svg></span>Our software does the rest</div>
+          <div class="it"><svg class="ico"><use href="#i-compass"/></svg><div><span class="when">At setup</span><b>Gemini 4 Carbon</b> writes the questions the Decisions API asks about each player.</div></div>
+          <div class="it"><svg class="ico"><use href="#i-flask"/></svg><div><span class="when">At a long break</span>A <b>managed agent on Gemini 4 Neon</b> writes rule sets, tests each in a sandbox and keeps the best.</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="explain tight" data-step="0" style="--d: 3500ms">Tennis and the shooter run on the same code. Only the setup file differs.</div>
+  </section>
+
+  <!-- 8. The recorded CS:GO clip. Put csgo.mp4 (or .webm, .mov) in the media folder. It plays once, with M for sound. -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>Recorded demo</div>
+    <h1 class="words h64" data-step="0" style="--d: 150ms">The same API, running in a shooter.</h1>
+    <div class="clip wide" data-step="0" data-src="media/csgo" style="--d: 500ms">
+      <div class="frame">
+        <video muted playsinline preload="auto"></video>
+        <div class="note"><b>Shooter highlights clip goes here</b><span>media/csgo.mp4</span><span>Gameplay on the left, the agent's reasoning on the right</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9. Proof. Numbers from the 1:05 PM run on the final code: 8 matches per scripted player against each opponent,
+       on the stand-in game. 63% is 141 uses of the favourite play and 39% is 137. Update both if a later run replaces it. -->
+  <section class="slide">
+    <div class="eyebrow" data-step="0"><span class="spark"></span>Proof</div>
+    <h1 class="words h80" data-step="0" style="--d: 150ms">Your favorite play pays off less.</h1>
+    <h1 class="words h80 soft" data-step="0" style="--d: 600ms">Same players, adapting off and on.</h1>
+
+    <div class="cards versus">
+      <div class="card" data-step="0" style="--d: 1100ms">
+        <div class="card-body">
+          <div class="label"><span class="ic sm"><svg class="ico"><use href="#i-lock"/></svg></span>Opponent that never changes</div>
+          <div class="num"><span class="count" data-to="63">63</span><small>%</small></div>
+        </div>
+      </div>
+      <div class="arrow" data-step="0" style="--d: 1300ms"><svg class="ico"><use href="#i-arrow"/></svg></div>
+      <div class="card" data-step="0" style="--d: 1400ms">
+        <div class="card-body">
+          <div class="label"><span class="ic sm"><svg class="ico"><use href="#i-refresh"/></svg></span>Opponent that adapts</div>
+          <div class="num"><span class="count" data-to="39">39</span><small>%</small></div>
+        </div>
+      </div>
+    </div>
+    <div class="explain" data-step="0" style="--d: 1700ms">How often the player's favorite play comes in a point they win, late in each match</div>
+    <div class="src" data-step="0" style="--d: 1900ms">Measured today on the real API. 3 scripted players, 8 simulated matches of 12 points against each opponent.</div>
+  </section>
+
+</main>
+
+<!--
+  The game runs in this frame. G flips between the slides and the game.
+  Set the game's address once by opening this page with ?game=http://localhost:PORT
+  (it is remembered on this laptop, and ?game= with nothing after it forgets it).
+  The game loads on the first switch to it, so its match starts then, and it is never
+  reloaded after that. Reload this page to start the game over.
+-->
+<iframe id="game" title="Game" tabindex="-1"
+  allow="serial; bluetooth; hid; usb; gamepad; camera; microphone; fullscreen; autoplay; accelerometer; gyroscope; magnetometer"></iframe>
+<div id="corner"><button id="back" type="button">Slides<span>G</span></button></div>
+<div id="hw">
+  <button id="hw-racket" type="button" tabindex="-1"><i class="dot"></i><span>Connect racket</span></button>
+  <button id="hw-usb" type="button" tabindex="-1" class="plain">USB cable</button>
+  <button id="hw-zero" type="button" tabindex="-1" hidden>Zero racket</button>
+  <button id="hw-cam" type="button" tabindex="-1"><i class="dot"></i><span>Turn camera on</span></button>
+  <span id="hw-note"></span>
+</div>
+
+<div id="dots"></div>
+<div id="hint">Arrow keys or space to move. G switches to the game and back. F for full screen.</div>
+
+<script>
+(() => {
+  // Add ?still to the address to turn every animation off (for screenshots or a slow laptop).
+  const still = new URLSearchParams(location.search).has('still');
+  if (still) document.documentElement.classList.add('still');
+  const reduce = still || matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- Slides ---------- */
+  const stage = document.getElementById('stage');
+  const slides = [...document.querySelectorAll('.slide')];
+  const dots = document.getElementById('dots');
+  slides.forEach(() => dots.appendChild(document.createElement('i')));
+
+  // Split headlines into words so they can come in one at a time.
+  document.querySelectorAll('.words').forEach(el => {
+    const words = el.textContent.trim().split(/\s+/);
+    el.textContent = '';
+    words.forEach((w, i) => {
+      const s = document.createElement('span');
+      s.className = 'w'; s.style.setProperty('--i', i); s.textContent = w;
+      el.appendChild(s);
+      if (i < words.length - 1) el.appendChild(document.createTextNode(' '));
+    });
+  });
+
+  // An optional looping clip: tries .mp4, .webm, .mov, then .gif, and shows a note if none exists.
+  document.querySelectorAll('.clip').forEach(clip => {
+    const v = clip.querySelector('video'), base = clip.dataset.src;
+    const tryGif = () => {
+      const img = new Image();
+      img.onload = () => v.replaceWith(img);
+      img.onerror = () => clip.classList.add('missing');
+      img.src = base + '.gif';
+    };
+    const tryVideo = exts => {
+      if (!exts.length) return tryGif();
+      v.onerror = () => tryVideo(exts.slice(1));
+      v.src = base + '.' + exts[0];
+    };
+    tryVideo(['mp4', 'webm', 'mov']);
+  });
+
+  const maxStep = s => Math.max(0, ...[...s.querySelectorAll('[data-step]')].map(e => +e.dataset.step));
+  let si = 0, step = 0;
+  const m = location.hash.match(/^#(\d+)\.(\d+)(g?)$/);
+  if (m) { si = Math.min(slides.length - 1, Math.max(0, m[1] - 1)); step = Math.min(maxStep(slides[si]), +m[2]); }
+
+  const fmt = n => n.toLocaleString('en-US');
+  function countUp(el, delay) {
+    const to = +el.dataset.to;
+    if (reduce) { el.textContent = fmt(to); return; }
+    el.textContent = '0';
+    const t0 = performance.now() + (delay || 0), dur = 1100;
+    (function tick(now) {
+      const p = Math.max(0, Math.min(1, (now - t0) / dur));
+      el.textContent = fmt(Math.round(to * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) requestAnimationFrame(tick);
+    })(performance.now());
+  }
+
+  function render() {
+    slides.forEach((s, i) => {
+      // A clip that plays once starts from the top each time its slide opens.
+      if (i === si && !s.classList.contains('active')) s.querySelectorAll('video').forEach(v => { if (!v.loop) { try { v.currentTime = 0; } catch (err) {} } });
+      s.classList.toggle('active', i === si);
+      s.dataset.at = i === si ? step : 0;
+      s.querySelectorAll('[data-step]').forEach(e => {
+        const on = i === si && +e.dataset.step <= step;
+        if (on && !e.classList.contains('on')) {
+          const delay = parseFloat(e.style.getPropertyValue('--d')) || 0;
+          e.querySelectorAll('.count').forEach(c => countUp(c, delay));
+        }
+        e.classList.toggle('on', on);
+      });
+    });
+    document.querySelectorAll('.slide video').forEach(v => {
+      if (v.closest('.slide') === slides[si] && !gameOn && v.getAttribute('src')) v.play().catch(() => {});
+      else v.pause();
+    });
+    [...dots.children].forEach((d, i) => d.classList.toggle('on', i === si));
+    history.replaceState(null, '', '#' + (si + 1) + '.' + step + (gameOn ? 'g' : ''));
+  }
+
+  function next() {
+    if (step < maxStep(slides[si])) step++;
+    else if (si < slides.length - 1) { si++; step = 0; }
+    else return;
+    kick = 1; render();
+  }
+  function prev() {
+    if (step > 0) step--;
+    else if (si > 0) { si--; step = maxStep(slides[si]); }
+    else return;
+    render();
+  }
+
+  // Start the deck again from its opening, without reloading the page (a reload
+  // would also reload the game and drop whatever is connected to it).
+  function rewind() {
+    si = 0; step = 0;
+    const root = document.documentElement;
+    root.classList.add('still');
+    document.querySelectorAll('[data-step].on').forEach(e => e.classList.remove('on'));
+    slides.forEach(s => { s.classList.remove('active'); s.dataset.at = 0; });
+    void stage.offsetWidth;
+    if (!still) root.classList.remove('still');
+    setTimeout(render, 250);
+  }
+
+  /* ---------- Game layer ----------
+     The game loads once in a full-screen frame and keeps running while the
+     slides show, so its state and a connected racket or controller stay as they are.
+     G is the only switch, and it never reloads or pauses the game. The slides stay
+     where they were, except that a slide marked data-after-game="next" hands over
+     to the slide after it when you come back from a game opened on it. */
+  const frame = document.getElementById('game');
+  const STAND_IN = 'game-placeholder.html';
+  const params = new URLSearchParams(location.search);
+  let gameOn = false, cameFrom = -1, gameSrc = STAND_IN;
+  try {
+    if (params.has('game')) {
+      if (params.get('game')) localStorage.setItem('deck.game', params.get('game'));
+      else localStorage.removeItem('deck.game');
+    }
+    gameSrc = localStorage.getItem('deck.game') || STAND_IN;
+  } catch (err) { gameSrc = params.get('game') || STAND_IN; }
+  try { if (!/^(https?|file):$/.test(new URL(gameSrc, location.href).protocol)) gameSrc = STAND_IN; }
+  catch (err) { gameSrc = STAND_IN; }
+
+  const isFlipKey = e => (e.key === 'g' || e.key === 'G') && !e.metaKey && !e.ctrlKey && !e.altKey
+    && !(e.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || '') || e.target.isContentEditable));
+
+  // The game loads the first time it is shown, not when the slides open, because a
+  // game may start its match the moment it loads. After that it is never reloaded.
+  // Open the page with ?preload to load it up front instead.
+  let gameLoaded = false;
+  function loadGame() {
+    if (gameLoaded) return;
+    gameLoaded = true;
+    frame.src = gameSrc;
+  }
+
+  // Tell the game when it is on screen, in case it wants to pause while hidden.
+  function tellGame() {
+    try { frame.contentWindow.postMessage(gameOn ? 'deck:shown' : 'deck:hidden', '*'); } catch (err) {}
+  }
+
+  function setGame(on) {
+    if (on === gameOn) return;
+    gameOn = on;
+    document.documentElement.classList.toggle('game-on', on);
+    frame.inert = !on;
+    kick = 1;
+    if (on) {
+      loadGame();
+      cameFrom = si;
+      frame.focus();
+      // The field is covered now, so stop drawing it once the fade is over.
+      setTimeout(() => { if (gameOn) cancelAnimationFrame(raf); }, 700);
+    } else {
+      if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+      window.focus();
+      // A slide marked data-after-game="next" hands over to the slide after it.
+      if (si === cameFrom && slides[si].dataset.afterGame === 'next' && si < slides.length - 1) { si++; step = 0; }
+      startField();
+    }
+    tellGame();
+    render();
+  }
+
+  frame.inert = true;
+  frame.addEventListener('load', () => {
+    // When the game is served from the same address as the slides, G is heard inside it too.
+    try { frame.contentWindow.addEventListener('keydown', e => { if (isFlipKey(e)) { e.preventDefault(); setGame(false); } }); }
+    catch (err) {}
+    if (gameOn) frame.focus();
+    tellGame();
+    findHardware();
+  });
+  // A game on another address can ask for the slides itself: parent.postMessage('deck:slides', '*')
+  addEventListener('message', e => {
+    if (e.source === frame.contentWindow && e.data === 'deck:slides') setGame(false);
+  });
+  // If the hidden game grabs the keyboard, take it back.
+  addEventListener('blur', () => setTimeout(() => {
+    if (!gameOn && document.activeElement === frame) { frame.blur(); window.focus(); }
+  }, 0));
+  document.getElementById('back').addEventListener('click', e => { e.stopPropagation(); setGame(false); });
+
+  /* ---------- Racket and camera ----------
+     The game keeps its racket, zero and webcam code in one module. When the game is
+     served from the same address as the slides, the buttons in the game view call that
+     same code, so nothing in the game has to change. A game without that module, or one
+     on another address, shows no buttons. */
+  const HW_MODULE = '/src/hardware/HardwareInputManager.ts';
+  const hwBar = document.getElementById('hw'), hwRacket = document.getElementById('hw-racket'),
+    hwUsb = document.getElementById('hw-usb'), hwZero = document.getElementById('hw-zero'),
+    hwCam = document.getElementById('hw-cam'), hwNote = document.getElementById('hw-note');
+  let hw = null, hwBusy = '', hwSaid = '', hwSaidUntil = 0;
+
+  async function findHardware() {
+    hw = null;
+    hwBar.classList.remove('ready');
+    try {
+      const w = frame.contentWindow;
+      // Use the address the game itself loaded the module from, so we get its copy and not a second one.
+      const seen = w.performance.getEntriesByType('resource').map(r => r.name).filter(n => n.includes(HW_MODULE));
+      if (!seen.length) return;
+      const mod = await w.eval('u => import(u)')(seen[seen.length - 1]);
+      if (mod && mod.hardwareInput && typeof mod.hardwareInput.getState === 'function') {
+        hw = mod.hardwareInput;
+        hwBar.classList.add('ready');
+        shareRacket();
+        paintHardware();
+      }
+    } catch (err) {}
+  }
+  // Pass the racket's readings on to the game's relay, so the game team's sensor page in
+  // another tab shows the same racket when it is connected here over Bluetooth or USB.
+  // Readings that arrived through the relay are not passed on again.
+  function shareRacket() {
+    if (!hw || hw.sharedByDeck || typeof hw.ingestSample !== 'function') return;
+    const inner = hw.ingestSample;
+    hw.sharedByDeck = true;
+    hw.ingestSample = function (sample, source) {
+      try {
+        if (source !== 'm5_ws' && this.ws && this.ws.readyState === 1) {
+          this.ws.send('I,' + sample.ax + ',' + sample.ay + ',' + sample.az + ',' + sample.gx + ',' + sample.gy + ',' + sample.gz + ',' + (sample.recenter ? 1 : 0));
+        }
+      } catch (err) {}
+      return inner.call(this, sample, source);
+    };
+  }
+  function say(text, seconds) { hwSaid = text; hwSaidUntil = Date.now() + (seconds || 6) * 1000; paintHardware(); }
+  function paintHardware() {
+    if (!hw) return;
+    let st, cam;
+    try { st = hw.getState(); cam = hw.webcam.getSnapshot(); } catch (err) { return; }
+    const live = !!st.imuConnected, wait = hwBusy === 'racket';
+    hwRacket.className = live ? 'on' : wait ? 'busy' : '';
+    hwRacket.lastElementChild.textContent = live ? 'Racket ' + Math.round(st.imuHz || 0) + ' Hz'
+      : wait ? 'Pick the racket in the list' : 'Connect racket';
+    hwUsb.hidden = live || wait;
+    hwZero.hidden = !live;
+    hwZero.className = st.calibration === 'needs_zero' ? 'call' : '';
+    hwZero.textContent = st.calibration === 'zeroing' ? 'Hold still' : st.calibration === 'ready' ? 'Zero again' : 'Zero racket';
+    const c = cam.status;
+    hwCam.className = c === 'running' ? 'on' : c === 'loading' ? 'busy' : c === 'error' ? 'bad' : '';
+    hwCam.lastElementChild.textContent = c === 'running' ? 'Camera on' : c === 'loading' ? 'Starting camera'
+      : c === 'error' ? 'Camera failed, try again' : 'Turn camera on';
+    hwNote.textContent = Date.now() < hwSaidUntil ? hwSaid : '';
+    hwBar.classList.toggle('quiet', live && st.calibration === 'ready' && !hwBusy && !hwNote.textContent && c !== 'loading' && c !== 'error');
+  }
+  setInterval(() => { if (gameOn && hw) paintHardware(); }, 400);
+
+  // Keep the keyboard in the game while the buttons are used.
+  hwBar.addEventListener('mousedown', e => e.preventDefault());
+  hwBar.addEventListener('click', e => e.stopPropagation());
+  async function connectRacket(viaUsb) {
+    if (!hw || hwBusy || hw.getState().imuConnected) return;
+    hwBusy = 'racket';
+    paintHardware();
+    let ok = false, why = '';
+    try {
+      if (viaUsb) ok = !!(await hw.connectSerial(115200));
+      else { const r = await hw.connectBle(); ok = !!(r && r.ok); why = (r && r.error) || ''; }
+    } catch (err) { why = String((err && err.message) || err); }
+    hwBusy = '';
+    if (ok) say('Racket connected. Hold it in your ready position and press Zero racket.', 9);
+    else say(/cancel/i.test(why) || !why ? 'No racket picked.' : 'Racket: ' + why, 9);
+    if (gameOn) frame.focus();
+  }
+  hwRacket.addEventListener('click', () => connectRacket(false));
+  hwUsb.addEventListener('click', () => connectRacket(true));
+  hwZero.addEventListener('click', () => {
+    if (!hw) return;
+    try { hw.zeroRacket(); } catch (err) {}
+    paintHardware();
+    if (gameOn) frame.focus();
+  });
+  hwCam.addEventListener('click', async () => {
+    if (!hw) return;
+    const c = hw.webcam.getSnapshot().status;
+    if (c === 'running' || c === 'loading') return;
+    let ok = false;
+    try { const p = hw.webcam.start(); paintHardware(); ok = await p; } catch (err) {}
+    if (!ok) say('Camera: ' + (hw.webcam.getSnapshot().error || 'could not start'), 9);
+    else paintHardware();
+    if (gameOn) frame.focus();
+  });
+
+  addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (isFlipKey(e)) { e.preventDefault(); setGame(!gameOn); return; }
+    if (k === 'f' || k === 'F') {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+      return;
+    }
+    if (gameOn) return;
+    if (k === 'm' || k === 'M') { slides[si].querySelectorAll('video').forEach(v => { v.muted = !v.muted; }); return; }
+    if (k === 'ArrowRight' || k === ' ' || k === 'PageDown' || k === 'Enter' || k === 'ArrowDown') { e.preventDefault(); next(); }
+    else if (k === 'ArrowLeft' || k === 'PageUp' || k === 'Backspace' || k === 'ArrowUp') { e.preventDefault(); prev(); }
+    else if (k === 'Home' || k === '0') rewind();
+  });
+  addEventListener('click', () => { if (!gameOn) next(); });
+  setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 5000);
+
+  /* ---------- Background field ----------
+     Rings of small coloured dashes that breathe outward, lean toward the
+     cursor, and push out once on every advance. */
+  const cv = document.getElementById('field');
+  const ctx = cv.getContext('2d');
+  let W = 0, H = 0, kick = 0, raf = 0;
+  const RINGS = 26;
+  const PALETTE = ['#1a73e8', '#4285f4', '#7b6cf6', '#ea4335', '#f29900', '#fbbc04'];
+  let parts = [];
+
+  function build() {
+    parts = [];
+    const D = Math.hypot(W, H) / 2;
+    for (let k = 0; k < RINGS; k++) {
+      const r = D * (0.2 + (k / (RINGS - 1)) * 0.9);
+      const n = Math.round((2 * Math.PI * r) / 58);
+      const off = Math.random() * Math.PI * 2;
+      for (let j = 0; j < n; j++) {
+        const a = off + (j / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.05;
+        // Colour follows the angle, so blues sit top right and warm tones bottom left.
+        const t = ((a + Math.PI * 0.3) % (Math.PI * 2)) / (Math.PI * 2);
+        const c = Math.min(PALETTE.length - 1, Math.floor((t + (Math.random() - 0.5) * 0.12 + 1) % 1 * PALETTE.length));
+        parts.push({ k, r, a, c, len: 2.5 + k * 0.1 + Math.random() * 2, tilt: (Math.random() - 0.5) * 0.5, tw: Math.random() * Math.PI * 2 });
+      }
+    }
+  }
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    stage.style.setProperty('--s', Math.min(W / 1920, H / 1080));
+    build();
+    if (reduce) draw(0);
+  }
+
+  let cx = 0, cy = 0, mx = null, my = null, lastMove = -1e9;
+  addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; lastMove = performance.now(); });
+
+  function draw(ms) {
+    const t = ms / 1000;
+    // The centre drifts on its own, and leans toward the cursor while it moves.
+    let tx = W / 2 + Math.sin(t * 0.21) * W * 0.05, ty = H / 2 + Math.cos(t * 0.17) * H * 0.05;
+    if (mx !== null && ms - lastMove < 3000) { tx += (mx - W / 2) * 0.35; ty += (my - H / 2) * 0.35; }
+    if (!cx) { cx = tx; cy = ty; }
+    cx += (tx - cx) * 0.04; cy += (ty - cy) * 0.04;
+    kick *= 0.95;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineCap = 'round';
+    const gap = (Math.hypot(W, H) / 2) * 0.9 / (RINGS - 1);
+    for (let tier = 0; tier < 2; tier++) {
+      for (let c = 0; c < PALETTE.length; c++) {
+        ctx.beginPath();
+        for (const p of parts) {
+          if (p.c !== c) continue;
+          const bright = Math.sin(t * 1.3 + p.tw) > 0.2 ? 1 : 0;
+          if (bright !== tier) continue;
+          const wave = Math.sin(t * 0.9 - p.k * 0.55) * gap * 0.3;
+          const r = p.r + wave + kick * (18 + p.k * 5);
+          const a = p.a + t * 0.018 * (p.k % 2 ? 1 : -1);
+          const ca = Math.cos(a), sa = Math.sin(a);
+          const x = cx + ca * r, y = cy + sa * r * 0.92;
+          if (x < -20 || x > W + 20 || y < -20 || y > H + 20) continue;
+          // Dashes orbit the centre. On an advance they swing outward, then settle back.
+          const l = p.len * (1 + kick * 2.2);
+          const dir = a + (1 - Math.min(1, kick * 1.4)) * Math.PI / 2 + p.tilt;
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(dir) * l, y + Math.sin(dir) * l);
+        }
+        ctx.strokeStyle = PALETTE[c];
+        ctx.globalAlpha = tier ? 0.8 : 0.32;
+        ctx.lineWidth = tier ? 2 : 1.6;
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    if (!reduce) raf = requestAnimationFrame(draw);
+  }
+  function startField() {
+    cancelAnimationFrame(raf);
+    if (reduce) draw(0); else raf = requestAnimationFrame(draw);
+  }
+
+  addEventListener('resize', resize);
+  resize();
+  startField();
+  // Let the first paint land before the opening words animate in. A timer, not
+  // an animation frame, so it still runs when the window is in the background.
+  setTimeout(() => {
+    render();
+    if (params.has('preload')) loadGame();
+    if (m && m[3]) setGame(true);
+  }, 120);
+})();
+</script>
+</body>
+</html>

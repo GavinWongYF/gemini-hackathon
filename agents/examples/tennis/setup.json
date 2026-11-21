@@ -1,0 +1,329 @@
+{
+  "type": "setup",
+  "match_id": "m_001",
+  "game": "tennis",
+  "about": "One human player plays single points against one AI opponent. The player stands stationary at the center baseline swinging a physical M5 IMU racket controller while a webcam tracks their stroke side (forehand/backhand) and swing path. Because player court movement is fixed, focus habit reads and counter-strategies on the player shot_type (topspin, slice, dropshot), side (forehand, backhand), swing_start tells (early_guess, backswing, initial_speed), and shot placement (lands): low slice to backhand disrupts heavy topspin habits, short dropshots/slices disrupt pure topspin grinders, and moving in (middle_short / anticipate move_in) with flat drives punishes dropshot habits. Serves are topspin, flat, or slice. Message timestamps t measure active play time in seconds.",
+  "mode": "live",
+  "goal": "Start beatable. Work out what this player relies on to win points and take it away, one habit at a time, until the player wins about half the points. Win by choosing better shots, never by hitting harder or faster.",
+  "plan": {
+    "break_every": 0,
+    "break_seconds": 0,
+    "update_seconds": 20
+  },
+  "lists": {
+    "zone": [
+      "left_short",
+      "middle_short",
+      "right_short",
+      "left_deep",
+      "middle_deep",
+      "right_deep"
+    ],
+    "human_shot_type": [
+      "topspin",
+      "slice",
+      "dropshot"
+    ],
+    "ai_shot_type": [
+      "topspin",
+      "flat",
+      "slice",
+      "dropshot",
+      "lob"
+    ],
+    "arm_zone": [
+      "left",
+      "center",
+      "right"
+    ]
+  },
+  "npcs": {
+    "opponent": {
+      "about": "The AI tennis player on the far side of the net.",
+      "decisions": {
+        "shot_type": {
+          "when": "Each time the opponent hits the ball.",
+          "options": {
+            "topspin": "Heavy arcing topspin with high bounce and strong margin.",
+            "flat": "Fast, low, penetrating drive that rushes the player timing.",
+            "slice": "Low-skidding backspin ball that stays low and forces upward lift.",
+            "dropshot": "Soft, short ball landing just over the net that punishes deep positioning.",
+            "lob": "High deep arc over the player head that resets the rally or punishes forward reach."
+          }
+        },
+        "aim": {
+          "when": "Each time the opponent hits the ball.",
+          "options": {
+            "left_deep": "Deep to the left side of the player half (right-hander backhand side).",
+            "middle_deep": "Deep down the middle of the player baseline.",
+            "right_deep": "Deep to the right side of the player half (right-hander forehand side).",
+            "left_short": "Short angle to the left side near the service line.",
+            "right_short": "Short angle to the right side near the service line."
+          }
+        },
+        "position": {
+          "when": "Right after the opponent hits the ball.",
+          "options": {
+            "middle_deep": "Recover to the middle of the far baseline.",
+            "left_deep": "Shade left on the far baseline to cover shots to screen-left.",
+            "right_deep": "Shade right on the far baseline to cover shots to screen-right.",
+            "middle_short": "Step forward toward the net to take the next ball early."
+          }
+        },
+        "anticipate": {
+          "when": "The moment the player starts a swing (~100-160ms before ball contact).",
+          "options": {
+            "stay": "Hold current position until the ball is hit.",
+            "lean_left": "Start moving early toward screen-left.",
+            "lean_right": "Start moving early toward screen-right.",
+            "move_in": "Start moving forward toward the net to cover a short ball.",
+            "move_back": "Start moving deeper behind the baseline."
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "swing_start": {
+      "about": "The player started a swing (~85-160ms before ball contact). High reliability on side and arm_zone (~92%); medium-high on backswing, initial_speed, and early_guess (~75-80% match with final shot — compare with shot to spot disguised tells).",
+      "fields": {
+        "early_guess": "human_shot_type",
+        "confidence": {
+          "min": 0,
+          "max": 1,
+          "about": "Reliable. Classifier confidence in early_guess before contact."
+        },
+        "backswing": {
+          "min": 0,
+          "max": 1,
+          "about": "Reliable. Pre-swing windup/takeback size (0 = compact/no windup, 1 = big windup)."
+        },
+        "initial_speed": {
+          "min": 0,
+          "max": 1,
+          "about": "Reliable. Swing onset speed in first 25ms (separates gentle dropshot taps from hard drives)."
+        },
+        "side": [
+          "forehand",
+          "backhand"
+        ],
+        "arm_zone": "arm_zone"
+      }
+    },
+    "anticipate": {
+      "about": "The opponent reacted to swing_start before ball contact.",
+      "fields": {
+        "move": [
+          "stay",
+          "lean_left",
+          "lean_right",
+          "move_in",
+          "move_back"
+        ]
+      }
+    },
+    "shot": {
+      "about": "Either side hit the ball (emitted once per shot at racket-ball contact with solved landing zone and result). High-reliability labels: side, arm_zone, shot_type, timing, from, lands, result. For shot direction, use lands rather than angle.",
+      "fields": {
+        "rally": "number",
+        "side": [
+          "forehand",
+          "backhand"
+        ],
+        "arm_zone": "arm_zone",
+        "shot_type": [
+          "topspin",
+          "flat",
+          "slice",
+          "dropshot",
+          "lob"
+        ],
+        "power": {
+          "min": 0,
+          "max": 1,
+          "about": "High reliability. Normalized swing effort from M5 peak dynamic accel + gyro (0 = soft touch, 1 = max rip)."
+        },
+        "rotation": {
+          "min": -1,
+          "max": 1,
+          "about": "Medium-high reliability (slightly noisy near 0). Spin from webcam vertical path + racket face; below -0.25 is slice, above +0.2 is topspin."
+        },
+        "angle": {
+          "min": -1,
+          "max": 1,
+          "about": "Noisy (gyro yaw can drift if feet shift mid-point) — weight lightly; use lands zone for shot direction."
+        },
+        "confidence": {
+          "min": 0,
+          "max": 1,
+          "about": "High reliability. Classifier + pose confidence in the shot_type and side labels."
+        },
+        "timing": [
+          "early",
+          "on_time",
+          "late"
+        ],
+        "quality": {
+          "min": 0,
+          "max": 1,
+          "about": "High reliability. Contact quality from lateral/depth reach and ball height (low when stretched or jammed, high when comfortable)."
+        },
+        "from": "zone",
+        "other_position": "zone",
+        "lands": "zone",
+        "result": [
+          "in",
+          "out",
+          "net"
+        ]
+      }
+    },
+    "missed_swing": {
+      "about": "High reliability. The player physically swung the racket during a rally and missed the ball (strong signal of being fooled by a dropshot or stretched out of reach).",
+      "fields": {
+        "side": [
+          "forehand",
+          "backhand"
+        ],
+        "arm_zone": "arm_zone",
+        "shot_type": "human_shot_type",
+        "power": {
+          "min": 0,
+          "max": 1,
+          "about": "High reliability. Effort of the missed swing."
+        },
+        "reason": [
+          "unreachable",
+          "too_early",
+          "too_late"
+        ]
+      }
+    }
+  },
+  "facts": {
+    "player_position": "zone",
+    "player_arm_zone": "arm_zone",
+    "player_last_side": [
+      "forehand",
+      "backhand"
+    ],
+    "player_last_shot_type": "human_shot_type",
+    "rally_length": "number",
+    "swing_early_guess": "human_shot_type",
+    "swing_backswing": {
+      "min": 0,
+      "max": 1,
+      "about": "Reliable. How big the player backswing was on the latest swing_start (passed to anticipate and to the opponent return picks on that shot)."
+    },
+    "swing_initial_speed": {
+      "min": 0,
+      "max": 1,
+      "about": "Reliable. How fast the player swing started in the first 25ms on the latest swing_start (passed to anticipate and to the opponent return picks on that shot)."
+    },
+    "swing_side": [
+      "forehand",
+      "backhand"
+    ],
+    "swing_arm_zone": "arm_zone"
+  },
+  "views": {
+    "court": "Broadcast view of both halves of the tennis court showing player, AI opponent, and ball positions (3D stadium court, or 2D tactical court fallback).",
+    "player_cam": "Unmirrored webcam on the player showing upper body and racket arm."
+  },
+  "settings": {
+    "opponent_speed": {
+      "about": "Fairness dial controlling how quickly the AI opponent split-steps, sprints across the court, and sets its feet before hitting (0.65 = sluggish/error-prone under pace, 0.85 = balanced default, 1.25 = fast/rock-solid wall; never changes ball speed).",
+      "min": 0.65,
+      "max": 1.25,
+      "now": 0.85
+    }
+  },
+  "practice": {
+    "players": {
+      "forehand_lover": {
+        "about": "Hits about 70% forehands, mostly cross-court. Weak on deep balls to the backhand."
+      },
+      "baseline_grinder": {
+        "about": "Stays deep behind the baseline and hits heavy topspin. Struggles with short dropshots."
+      },
+      "even": {
+        "about": "Balanced player with no strong habit. Spreads shots evenly."
+      }
+    }
+  },
+  "default_behaviour": {
+    "version": 0,
+    "npcs": {
+      "opponent": {
+        "decisions": {
+          "shot_type": {
+            "topspin": {
+              "base": 0.42
+            },
+            "flat": {
+              "base": 0.24
+            },
+            "slice": {
+              "base": 0.2
+            },
+            "dropshot": {
+              "base": 0.06
+            },
+            "lob": {
+              "base": 0.08
+            }
+          },
+          "aim": {
+            "left_deep": {
+              "base": 0.22
+            },
+            "middle_deep": {
+              "base": 0.34
+            },
+            "right_deep": {
+              "base": 0.22
+            },
+            "left_short": {
+              "base": 0.11
+            },
+            "right_short": {
+              "base": 0.11
+            }
+          },
+          "position": {
+            "middle_deep": {
+              "base": 0.7
+            },
+            "left_deep": {
+              "base": 0.1
+            },
+            "right_deep": {
+              "base": 0.1
+            },
+            "middle_short": {
+              "base": 0.1
+            }
+          },
+          "anticipate": {
+            "stay": {
+              "base": 0.68
+            },
+            "lean_left": {
+              "base": 0.08
+            },
+            "lean_right": {
+              "base": 0.08
+            },
+            "move_in": {
+              "base": 0.08
+            },
+            "move_back": {
+              "base": 0.08
+            }
+          }
+        },
+        "rules": []
+      }
+    }
+  }
+}

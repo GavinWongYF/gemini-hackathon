@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Opponent brain</title>
+  <script>
+    // The dense view shows only with ?debug=1. The plain address is the two side panels.
+    if (new URLSearchParams(location.search).get("debug") !== "1") location.replace("panels-test.html" + location.search);
+  </script>
+  <link rel="stylesheet" href="screen.css">
+</head>
+<body data-state="waiting">
+
+  <!-- The dense view, behind ?debug=1 -->
+  <div class="screen">
+
+    <header class="top">
+      <div class="brand">
+        <div class="brand-name">Opponent brain</div>
+        <div class="brand-source" id="source">connecting</div>
+      </div>
+
+      <ol class="stages">
+        <li class="stage" id="stage-watching">
+          <span class="lamp"></span>
+          <div>
+            <div class="stage-name">Watching</div>
+            <div class="stage-detail" id="watching-detail">&nbsp;</div>
+          </div>
+        </li>
+        <li class="stage-sep">&gt;</li>
+        <li class="stage" id="stage-reading">
+          <span class="lamp"></span>
+          <div>
+            <div class="stage-name">Reading</div>
+            <div class="stage-detail" id="reading-detail">&nbsp;</div>
+          </div>
+        </li>
+        <li class="stage-sep">&gt;</li>
+        <li class="stage" id="stage-rewriting">
+          <span class="lamp"></span>
+          <div>
+            <div class="stage-name">Rewriting</div>
+            <div class="stage-detail" id="rewriting-detail">&nbsp;</div>
+          </div>
+        </li>
+      </ol>
+
+      <div class="status">
+        <div class="slot" id="slot-next">
+          <div class="slot-label">Next version</div>
+          <div class="slot-value" id="next-value">&nbsp;</div>
+          <div class="slot-note" id="next-note">&nbsp;</div>
+        </div>
+        <div class="slot" id="slot-live">
+          <div class="slot-label">Live now</div>
+          <div class="slot-value" id="version">&nbsp;</div>
+          <div class="slot-note" id="live-note">&nbsp;</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="cols">
+
+      <section class="col col-left">
+        <div class="panel">
+          <h2>What Gemini sees</h2>
+          <div class="frames" id="frames"></div>
+          <div class="note" id="picture-note">&nbsp;</div>
+        </div>
+        <div class="panel panel-grow">
+          <h2>Its read of you</h2>
+          <div class="bars" id="bars"></div>
+          <div class="read-why" id="read-why"></div>
+        </div>
+      </section>
+
+      <section class="col col-centre">
+        <div class="panel-head">
+          <h2>The opponent's plan</h2>
+          <div class="tag" id="plan-tag"></div>
+        </div>
+        <div class="plan">
+          <div class="court-wrap" id="court-wrap">
+            <div class="waiting" id="waiting">
+              <div class="waiting-title">Waiting for a game</div>
+              <div class="waiting-detail" id="waiting-detail"></div>
+            </div>
+          </div>
+          <div class="plan-side">
+            <div class="side-block">
+              <h3>Where it aims next</h3>
+              <div class="legend">
+                <span class="legend-ramp"></span>
+                <span>brighter is more likely</span>
+              </div>
+              <div class="legend">
+                <span class="legend-dot"></span>
+                <span>where your shots landed</span>
+              </div>
+            </div>
+            <div class="side-block">
+              <h3>Shot mix</h3>
+              <div class="mix" id="mix"></div>
+            </div>
+            <div class="side-block">
+              <h3>Rules installed</h3>
+              <div class="rules" id="rules"></div>
+            </div>
+          </div>
+        </div>
+        <div class="last-shot">
+          <h3>Last shot</h3>
+          <div class="shot-line" id="shot-line">&nbsp;</div>
+          <div class="shot-why" id="shot-why">&nbsp;</div>
+          <div class="shot-base" id="shot-base">&nbsp;</div>
+        </div>
+      </section>
+
+      <section class="col col-right">
+        <div class="panel-head">
+          <h2>Why it changed</h2>
+          <div class="tag" id="why-tag"></div>
+        </div>
+        <div class="why" id="why"></div>
+      </section>
+
+    </main>
+
+    <footer class="bottom">
+      <div class="fav">
+        <h2>Your favourite play</h2>
+        <div class="fav-name" id="fav-name">&nbsp;</div>
+        <div class="fav-detail" id="fav-detail">&nbsp;</div>
+      </div>
+      <div class="versions">
+        <h2>How often it came in points you won</h2>
+        <div class="version-row" id="version-row"></div>
+      </div>
+      <div class="points">
+        <h2>Points</h2>
+        <div class="points-score" id="points-score">&nbsp;</div>
+        <div class="points-detail" id="points-detail">&nbsp;</div>
+      </div>
+    </footer>
+
+  </div>
+  <script src="screen.js"></script>
+</body>
+</html>

@@ -1,0 +1,871 @@
+{
+  "game": "tennis",
+  "about": "Stand-in for the tennis game with no screen. Each exchange the opponent hits and moves, then the scripted player hits back. A point ends when someone wins an exchange.",
+  "npc": "opponent",
+  "pacing": {
+    "exchange_seconds": 1.5,
+    "gap_seconds": 2
+  },
+  "player_choices": {
+    "shot": {
+      "shot_type": "human_shot_type"
+    }
+  },
+  "players": {
+    "forehand_lover": {
+      "about": "Baseline topspin hitter. About 70% forehands, mostly topspin, and more than half of all shots go cross-court to the left of the baseline. Honest early sign: the start of the swing shows the real shot about 90% of the time. The counters are to wait on the left of the baseline and to slice.",
+      "habit": {
+        "event": "shot",
+        "field": "lands",
+        "value": "left_deep"
+      },
+      "plays": {
+        "shot": {
+          "side": {
+            "forehand": 0.7,
+            "backhand": 0.3
+          },
+          "shot_type": {
+            "topspin": 0.7,
+            "slice": 0.2,
+            "dropshot": 0.1
+          },
+          "from": {
+            "left_deep": 0.3,
+            "middle_deep": 0.4,
+            "right_deep": 0.3
+          },
+          "arm_zone": {
+            "right": 0.6,
+            "center": 0.25,
+            "left": 0.15
+          },
+          "lands": {
+            "left_deep": 0.55,
+            "middle_deep": 0.12,
+            "right_deep": 0.12,
+            "left_short": 0.07,
+            "middle_short": 0.07,
+            "right_short": 0.07
+          }
+        }
+      },
+      "tells": {
+        "early_guess": 0.9
+      }
+    },
+    "baseline_grinder": {
+      "about": "Stays deep behind the baseline and hits heavy topspin. Struggles with short dropshots. Disguises the early sign: the start of the swing shows the real shot only about 40% of the time.",
+      "habit": {
+        "event": "shot",
+        "field": "shot_type",
+        "value": "topspin"
+      },
+      "tells": {
+        "early_guess": 0.4
+      },
+      "plays": {
+        "shot": {
+          "side": {
+            "forehand": 0.5,
+            "backhand": 0.5
+          },
+          "shot_type": {
+            "topspin": 0.75,
+            "slice": 0.15,
+            "dropshot": 0.1
+          },
+          "from": {
+            "left_deep": 0.25,
+            "middle_deep": 0.5,
+            "right_deep": 0.25
+          },
+          "arm_zone": {
+            "left": 0.3,
+            "center": 0.4,
+            "right": 0.3
+          },
+          "lands": {
+            "left_deep": 0.36,
+            "middle_deep": 0.2,
+            "right_deep": 0.36,
+            "left_short": 0.03,
+            "middle_short": 0.02,
+            "right_short": 0.03
+          }
+        }
+      }
+    },
+    "even": {
+      "about": "Balanced player with no strong habit. Spreads shots evenly. Nothing to exploit, so adapting should not help here.",
+      "plays": {
+        "shot": {
+          "side": {
+            "forehand": 0.5,
+            "backhand": 0.5
+          },
+          "shot_type": {
+            "topspin": 0.34,
+            "slice": 0.33,
+            "dropshot": 0.33
+          },
+          "from": {
+            "left_deep": 0.28,
+            "middle_deep": 0.29,
+            "right_deep": 0.28,
+            "left_short": 0.05,
+            "middle_short": 0.05,
+            "right_short": 0.05
+          },
+          "arm_zone": {
+            "left": 0.33,
+            "center": 0.34,
+            "right": 0.33
+          },
+          "lands": {
+            "left_deep": 0.17,
+            "middle_deep": 0.17,
+            "right_deep": 0.17,
+            "left_short": 0.17,
+            "middle_short": 0.16,
+            "right_short": 0.16
+          }
+        }
+      }
+    }
+  },
+  "play_rules": {
+    "shot": [
+      {
+        "why": "Every shot: how sure the classifier is, and clean contact on time by default.",
+        "when": {},
+        "spread": {
+          "confidence": {
+            "min": 0.7,
+            "max": 0.98
+          },
+          "timing": {
+            "early": 0.15,
+            "on_time": 0.7,
+            "late": 0.15
+          },
+          "quality": {
+            "min": 0.6,
+            "max": 0.95
+          },
+          "angle": {
+            "min": -1,
+            "max": 1
+          }
+        }
+      },
+      {
+        "why": "Soft dropshots.",
+        "when": {
+          "player": {
+            "shot_type": "dropshot"
+          }
+        },
+        "spread": {
+          "power": {
+            "min": 0.14,
+            "max": 0.4
+          },
+          "rotation": {
+            "min": -0.6,
+            "max": 0.15
+          }
+        }
+      },
+      {
+        "why": "Slice is rally pace with backspin.",
+        "when": {
+          "player": {
+            "shot_type": "slice"
+          }
+        },
+        "spread": {
+          "power": {
+            "min": 0.5,
+            "max": 0.78
+          },
+          "rotation": {
+            "min": -0.95,
+            "max": -0.27
+          }
+        }
+      },
+      {
+        "why": "Topspin is rally pace with topspin.",
+        "when": {
+          "player": {
+            "shot_type": "topspin"
+          }
+        },
+        "spread": {
+          "power": {
+            "min": 0.5,
+            "max": 0.78
+          },
+          "rotation": {
+            "min": 0.22,
+            "max": 0.95
+          }
+        }
+      },
+      {
+        "why": "Some topspin drives are hit hard.",
+        "when": {
+          "player": {
+            "shot_type": "topspin",
+            "side": "forehand"
+          }
+        },
+        "spread": {
+          "power": {
+            "min": 0.55,
+            "max": 0.95
+          }
+        }
+      },
+      {
+        "why": "Spin close to 0 is hard to classify.",
+        "when": {
+          "player": {
+            "rotation": {
+              "min": -0.25,
+              "max": 0.2
+            }
+          }
+        },
+        "spread": {
+          "confidence": {
+            "min": 0.35,
+            "max": 0.75
+          }
+        }
+      },
+      {
+        "why": "A fast or deep ball jams the player.",
+        "when": {
+          "npc": {
+            "shot_type": [
+              "flat",
+              "topspin"
+            ],
+            "aim": [
+              "left_deep",
+              "middle_deep",
+              "right_deep"
+            ]
+          }
+        },
+        "spread": {
+          "timing": {
+            "early": 0.05,
+            "on_time": 0.5,
+            "late": 0.45
+          }
+        }
+      },
+      {
+        "why": "A short ball from the baseline makes the player run.",
+        "when": {
+          "player": {
+            "from": [
+              "left_deep",
+              "middle_deep",
+              "right_deep"
+            ]
+          },
+          "npc": {
+            "aim": [
+              "left_short",
+              "middle_short",
+              "right_short"
+            ]
+          }
+        },
+        "spread": {
+          "timing": {
+            "early": 0.05,
+            "on_time": 0.55,
+            "late": 0.4
+          }
+        }
+      },
+      {
+        "why": "A slow lob or slice gets swung at too early.",
+        "when": {
+          "npc": {
+            "shot_type": [
+              "lob",
+              "slice"
+            ]
+          }
+        },
+        "spread": {
+          "timing": {
+            "early": 0.35,
+            "on_time": 0.55,
+            "late": 0.1
+          }
+        }
+      },
+      {
+        "why": "Late contact is jammed.",
+        "when": {
+          "player": {
+            "timing": "late"
+          }
+        },
+        "spread": {
+          "quality": {
+            "min": 0.15,
+            "max": 0.55
+          }
+        }
+      },
+      {
+        "why": "Early contact is a little off.",
+        "when": {
+          "player": {
+            "timing": "early"
+          }
+        },
+        "spread": {
+          "quality": {
+            "min": 0.35,
+            "max": 0.75
+          }
+        }
+      }
+    ],
+    "missed_swing": [
+      {
+        "why": "Missed on time: the ball was out of reach.",
+        "when": {},
+        "spread": {
+          "reason": {
+            "unreachable": 1.0
+          }
+        }
+      },
+      {
+        "when": {
+          "player": {
+            "timing": "late"
+          }
+        },
+        "spread": {
+          "reason": {
+            "too_late": 0.8,
+            "unreachable": 0.2
+          }
+        }
+      },
+      {
+        "when": {
+          "player": {
+            "timing": "early"
+          }
+        },
+        "spread": {
+          "reason": {
+            "too_early": 0.8,
+            "unreachable": 0.2
+          }
+        }
+      }
+    ],
+    "swing_start": [
+      {
+        "why": "How sure the early classifier is.",
+        "when": {},
+        "spread": {
+          "confidence": {
+            "min": 0.5,
+            "max": 0.92
+          }
+        }
+      },
+      {
+        "why": "The swing looks like the shot it shows: a dropshot starts slow with a small backswing.",
+        "when": {
+          "player": {
+            "early_guess": "dropshot"
+          }
+        },
+        "spread": {
+          "backswing": {
+            "min": 0.05,
+            "max": 0.3
+          },
+          "initial_speed": {
+            "min": 0.05,
+            "max": 0.3
+          }
+        }
+      },
+      {
+        "when": {
+          "player": {
+            "early_guess": "slice"
+          }
+        },
+        "spread": {
+          "backswing": {
+            "min": 0.35,
+            "max": 0.7
+          },
+          "initial_speed": {
+            "min": 0.35,
+            "max": 0.65
+          }
+        }
+      },
+      {
+        "when": {
+          "player": {
+            "early_guess": "topspin"
+          }
+        },
+        "spread": {
+          "backswing": {
+            "min": 0.55,
+            "max": 0.95
+          },
+          "initial_speed": {
+            "min": 0.55,
+            "max": 0.95
+          }
+        }
+      }
+    ]
+  },
+  "round": {
+    "max_exchanges": 6,
+    "exchange": {
+      "order": "npc_first",
+      "npc": {
+        "decisions": [
+          "shot_type",
+          "aim",
+          "position"
+        ],
+        "event": {
+          "name": "shot",
+          "data": {
+            "rally": "$exchange",
+            "shot_type": "$picked.shot_type",
+            "lands": "$picked.aim",
+            "result": "in"
+          }
+        }
+      },
+      "tell": {
+        "event": "swing_start",
+        "copy": {
+          "side": "side",
+          "arm_zone": "arm_zone",
+          "early_guess": "shot_type"
+        },
+        "match": {
+          "side": 0.92,
+          "arm_zone": 0.92,
+          "early_guess": 0.78
+        }
+      },
+      "react": {
+        "decisions": [
+          "anticipate"
+        ],
+        "event": {
+          "name": "anticipate",
+          "data": {
+            "move": "$picked.anticipate"
+          }
+        }
+      },
+      "player": {
+        "event": "shot",
+        "data": {
+          "rally": "$exchange",
+          "other_position": "$picked.position"
+        }
+      },
+      "facts": {
+        "player_position": "$player.from",
+        "player_arm_zone": "$player.arm_zone",
+        "player_last_side": "$player.side",
+        "player_last_shot_type": "$player.shot_type",
+        "rally_length": "$exchange",
+        "swing_early_guess": "$tell.early_guess",
+        "swing_backswing": "$tell.backswing",
+        "swing_initial_speed": "$tell.initial_speed",
+        "swing_side": "$tell.side",
+        "swing_arm_zone": "$tell.arm_zone"
+      }
+    }
+  },
+  "outcome": {
+    "player_wins": 0.18,
+    "npc_wins": 0.1,
+    "adjust": [
+      {
+        "player": {
+          "lands": "left_deep"
+        },
+        "npc": {
+          "position": "left_deep"
+        },
+        "player_wins": -0.2,
+        "why": "The opponent is already waiting where the ball lands."
+      },
+      {
+        "player": {
+          "lands": "middle_deep"
+        },
+        "npc": {
+          "position": "middle_deep"
+        },
+        "player_wins": -0.2
+      },
+      {
+        "player": {
+          "lands": "right_deep"
+        },
+        "npc": {
+          "position": "right_deep"
+        },
+        "player_wins": -0.2
+      },
+      {
+        "player": {
+          "lands": [
+            "left_deep",
+            "right_deep"
+          ]
+        },
+        "npc": {
+          "position": "middle_deep"
+        },
+        "player_wins": -0.02,
+        "why": "From the middle the opponent can reach the corners sometimes."
+      },
+      {
+        "player": {
+          "lands": "right_deep"
+        },
+        "npc": {
+          "position": "left_deep"
+        },
+        "player_wins": 0.08,
+        "why": "Wrong-footed."
+      },
+      {
+        "player": {
+          "lands": "left_deep"
+        },
+        "npc": {
+          "position": "right_deep"
+        },
+        "player_wins": 0.08,
+        "why": "Wrong-footed."
+      },
+      {
+        "player": {
+          "lands": [
+            "left_short",
+            "middle_short",
+            "right_short"
+          ]
+        },
+        "npc": {
+          "position": "middle_short"
+        },
+        "player_wins": -0.15,
+        "why": "The opponent is at the net for the short ball."
+      },
+      {
+        "player": {
+          "lands": [
+            "left_deep",
+            "middle_deep",
+            "right_deep"
+          ]
+        },
+        "npc": {
+          "position": "middle_short"
+        },
+        "player_wins": 0.08,
+        "why": "Passed at the net."
+      },
+      {
+        "player": {
+          "from": [
+            "left_short",
+            "middle_short",
+            "right_short"
+          ]
+        },
+        "npc": {
+          "shot_type": "lob"
+        },
+        "player_wins": -0.2,
+        "npc_wins": 0.12,
+        "why": "Lobbed over a player at the net."
+      },
+      {
+        "player": {
+          "from": [
+            "left_short",
+            "middle_short",
+            "right_short"
+          ]
+        },
+        "npc": {
+          "shot_type": "dropshot"
+        },
+        "player_wins": 0.12,
+        "why": "A dropshot sits up for a player already at the net."
+      },
+      {
+        "player": {
+          "from": [
+            "left_short",
+            "middle_short",
+            "right_short"
+          ]
+        },
+        "npc": {
+          "shot_type": "flat"
+        },
+        "player_wins": 0.1,
+        "why": "A flat ball at a player at the net gets volleyed away."
+      },
+      {
+        "player": {
+          "from": [
+            "left_deep",
+            "middle_deep",
+            "right_deep"
+          ]
+        },
+        "npc": {
+          "shot_type": "lob"
+        },
+        "player_wins": 0.08,
+        "why": "A lob to a baseline player is easy to attack."
+      },
+      {
+        "player": {
+          "shot_type": "topspin"
+        },
+        "npc": {
+          "shot_type": "slice"
+        },
+        "player_wins": -0.12,
+        "why": "The slice stays low under a topspin swing."
+      },
+      {
+        "player": {
+          "shot_type": [
+            "slice",
+            "dropshot"
+          ]
+        },
+        "npc": {
+          "shot_type": "slice"
+        },
+        "player_wins": 0.06,
+        "why": "A low slice is easy to chip back."
+      },
+      {
+        "player": {
+          "shot_type": "topspin",
+          "from": [
+            "left_deep",
+            "middle_deep",
+            "right_deep"
+          ]
+        },
+        "npc": {
+          "shot_type": "dropshot"
+        },
+        "player_wins": -0.1,
+        "npc_wins": 0.06,
+        "why": "A heavy topspin hitter far behind the baseline struggles with a short dropshot."
+      },
+      {
+        "player": {
+          "shot_type": [
+            "slice",
+            "dropshot"
+          ]
+        },
+        "npc": {
+          "shot_type": "dropshot"
+        },
+        "player_wins": 0.06,
+        "why": "A player who slices handles the short ball."
+      },
+      {
+        "player": {
+          "shot_type": "topspin",
+          "from": [
+            "left_deep",
+            "middle_deep",
+            "right_deep"
+          ]
+        },
+        "npc": {
+          "shot_type": [
+            "flat",
+            "topspin"
+          ]
+        },
+        "player_wins": 0.06,
+        "why": "Heavy topspin from the baseline wins the long rally exchanges."
+      },
+      {
+        "group": "anticipation",
+        "scale": 1.0,
+        "why": "The opponent's move at the start of the swing. A fit makes the point harder for the player, a wrong guess a little easier.",
+        "rows": [
+          {
+            "player": {
+              "lands": [
+                "left_short",
+                "middle_short",
+                "right_short"
+              ]
+            },
+            "npc": {
+              "anticipate": "move_in"
+            },
+            "player_wins": -0.08
+          },
+          {
+            "player": {
+              "lands": [
+                "left_deep",
+                "left_short"
+              ]
+            },
+            "npc": {
+              "anticipate": "lean_left"
+            },
+            "player_wins": -0.06
+          },
+          {
+            "player": {
+              "lands": [
+                "right_deep",
+                "right_short"
+              ]
+            },
+            "npc": {
+              "anticipate": "lean_right"
+            },
+            "player_wins": -0.06
+          },
+          {
+            "player": {
+              "lands": [
+                "left_deep",
+                "middle_deep",
+                "right_deep"
+              ],
+              "shot_type": "topspin"
+            },
+            "npc": {
+              "anticipate": "move_back"
+            },
+            "player_wins": -0.05
+          },
+          {
+            "player": {
+              "lands": [
+                "right_deep",
+                "right_short"
+              ]
+            },
+            "npc": {
+              "anticipate": "lean_left"
+            },
+            "player_wins": 0.03
+          },
+          {
+            "player": {
+              "lands": [
+                "left_deep",
+                "left_short"
+              ]
+            },
+            "npc": {
+              "anticipate": "lean_right"
+            },
+            "player_wins": 0.03
+          },
+          {
+            "player": {
+              "lands": [
+                "left_deep",
+                "middle_deep",
+                "right_deep"
+              ]
+            },
+            "npc": {
+              "anticipate": "move_in"
+            },
+            "player_wins": 0.03
+          },
+          {
+            "player": {
+              "lands": [
+                "left_short",
+                "middle_short",
+                "right_short"
+              ]
+            },
+            "npc": {
+              "anticipate": "move_back"
+            },
+            "player_wins": 0.03
+          }
+        ]
+      }
+    ],
+    "player_data": {
+      "player": {
+        "result": "in"
+      },
+      "npc": {
+        "result": [
+          "out",
+          "net"
+        ]
+      },
+      "none": {
+        "result": "in"
+      }
+    },
+    "how": {
+      "player": "winner",
+      "npc": "error",
+      "long": "long_rally"
+    },
+    "stats": {
+      "rally_length": "$exchange"
+    },
+    "swap": {
+      "npc": {
+        "chance": 0.35,
+        "event": "missed_swing",
+        "how": "missed_swing",
+        "why": "Some points the player loses are a swing and a miss, not a ball in the net."
+      }
+    }
+  }
+}

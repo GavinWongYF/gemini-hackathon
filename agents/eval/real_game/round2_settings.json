@@ -1,0 +1,50 @@
+{
+  "match_seconds": 90,
+  "window_seconds": 30,
+  "pace": "real",
+  "linger_seconds": 2,
+  "runs": 1,
+  "parallel": 8,
+  "seed": 82,
+  "players": [
+    "forehand_lover",
+    "baseline_grinder",
+    "even",
+    "person-beginner",
+    "person-club",
+    "person-strong",
+    "person-reactive"
+  ],
+  "top_values": 3,
+  "value_move": 0.1,
+  "share_floor": 0.4,
+  "max_added_share": 0.15,
+  "dial_harder": { "opponent_speed": "up" },
+  "person": {
+    "beginner": {
+      "forehand": 0.85,
+      "miss_rate": 0.25,
+      "extra_penalty": 0.18,
+      "power": 0.6,
+      "shot_type": { "topspin": 0.8, "slice": 0.15, "dropshot": 0.05 },
+      "lands": { "middle_deep": 0.5, "left_deep": 0.2, "right_deep": 0.2, "middle_short": 0.1 }
+    },
+    "club": {
+      "forehand": 0.85,
+      "miss_rate": 0.12,
+      "extra_penalty": 0.08,
+      "power": 0.75,
+      "shot_type": { "topspin": 0.75, "slice": 0.2, "dropshot": 0.05 },
+      "lands": { "left_deep": 0.4, "middle_deep": 0.3, "right_deep": 0.25, "left_short": 0.05 }
+    },
+    "strong": {
+      "forehand": 0.85,
+      "miss_rate": 0.05,
+      "extra_penalty": 0.0,
+      "power": 0.85,
+      "shot_type": { "topspin": 0.7, "slice": 0.2, "dropshot": 0.1 },
+      "lands": { "left_deep": 0.45, "right_deep": 0.35, "middle_deep": 0.15, "left_short": 0.05 }
+    }
+  },
+  "reactive": { "level": "club", "react_after_losses": 2 }
+}

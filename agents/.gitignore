@@ -1,0 +1,6 @@
+# Local run data (stored designs, recorded streams)
+data/
+.pytest_cache/
+
+# Test outputs: replayed matches written by the replay check
+eval/replay/out/

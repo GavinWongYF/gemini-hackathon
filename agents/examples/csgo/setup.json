@@ -1,0 +1,76 @@
+{
+  "type": "setup",
+  "match_id": "cs_001",
+  "game": "csgo",
+  "about": "One human player attacks a site that a squad of AI enemies defends. A round ends when the player dies or every enemy is down.",
+  "mode": "live",
+  "goal": "Make every round close. Whatever worked for the player last round should be harder in the next one.",
+  "plan": {"rounds": 4, "break_every": 2, "break_seconds": 150, "update_seconds": 8},
+  "lists": {
+    "place": ["main", "mid", "flank", "site"],
+    "weapon": ["pistol", "rifle", "sniper", "grenade", "knife"]
+  },
+  "npcs": {
+    "enemies": {
+      "about": "The whole enemy squad. They share one behaviour.",
+      "decisions": {
+        "formation": {
+          "when": "At the start of each round.",
+          "options": {
+            "all_on_site": "Everyone holds the site.",
+            "spread_out": "One enemy on each way in.",
+            "watch_flank": "One enemy stays back to watch the flank and the rest hold the site."
+          }
+        },
+        "on_contact": {
+          "when": "The moment any enemy sees the player.",
+          "options": {
+            "hold": "Stay in cover and wait.",
+            "push": "Move toward the player together.",
+            "fall_back": "Retreat to the site."
+          }
+        },
+        "on_gunfire": {
+          "when": "When shots are heard in another part of the map.",
+          "options": {
+            "stay": "Nobody moves.",
+            "send_one": "The nearest enemy goes to help.",
+            "everyone": "The whole squad goes."
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "round_start": {
+      "about": "A round began.",
+      "fields": {}
+    },
+    "entered": {
+      "about": "The player walked into a named part of the map.",
+      "fields": {"place": "place"}
+    },
+    "spotted": {
+      "about": "An enemy saw the player.",
+      "fields": {"place": "place"}
+    },
+    "kill": {
+      "about": "Someone went down.",
+      "fields": {"place": "place", "weapon": "weapon", "from_behind": ["yes", "no"]}
+    }
+  },
+  "facts": {
+    "player_last_seen": "place",
+    "enemies_alive": "number",
+    "seconds_into_round": "number"
+  },
+  "views": {
+    "screen": "The player's own screen.",
+    "player_cam": "A webcam on the player."
+  },
+  "settings": {
+    "enemy_count": {"about": "How many enemies start the round.", "min": 3, "max": 6, "now": 4},
+    "loadout": {"about": "What the enemies carry.", "options": ["pistols", "rifles", "rifles_and_a_sniper"], "now": "rifles"},
+    "extra_cover": {"about": "Extra cover the game can add.", "options": ["none", "crates_on_site", "wall_at_flank"], "now": "none"}
+  }
+}
