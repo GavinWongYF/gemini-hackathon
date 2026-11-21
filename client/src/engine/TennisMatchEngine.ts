@@ -231,6 +231,7 @@ export class TennisMatchEngine {
     this.matchTimeSec = 0;
     this.pointTimeSec = 0;
     this.phaseTimerSec = 0;
+    this.pausedFromPhase = null;
     this.rallyShotCount = 0;
     this.shotHistory = [];
     this.shotSeq = 0;
@@ -248,8 +249,15 @@ export class TennisMatchEngine {
   startMatch() {
     this.matchTimeSec = 0;
     this.pointTimeSec = 0;
+    this.pausedFromPhase = null;
+    this.rallyShotCount = 0;
     this.shotHistory = [];
     this.shotSeq = 0;
+    this.activeShotArc = [];
+    this.activeShotRecord = null;
+    this.opponentHitScheduled = false;
+    this.pendingOpponentDecision = null;
+    this.lastOpponentShot = null;
     this.renderState = createInitialMatchRenderState(this.opts.totalDemoPoints);
     this.startNextPoint();
   }

@@ -16,6 +16,8 @@ export interface CourtToolbarProps {
   onRestart: () => void;
   onTogglePause: () => void;
   onForceStart?: () => void;
+  showPausedArcs?: boolean;
+  onTogglePausedArcs?: () => void;
 }
 
 const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -28,7 +30,7 @@ function formatCallBadge(phase: MatchRenderState['phase'], rawCall: string, rall
     return { text: 'AWAITING READY', tone: 'neutral' };
   }
   if (phase === 'demo_pause') {
-    return { text: 'STRATEGY CHECKPOINT · 3D REPLAY', tone: 'pause' };
+    return { text: 'GAME PAUSED', tone: 'pause' };
   }
   if (phase === 'match_over') {
     return { text: 'EVALUATION COMPLETE', tone: 'accent' };
@@ -74,6 +76,8 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
   onRestart,
   onTogglePause,
   onForceStart,
+  showPausedArcs = true,
+  onTogglePausedArcs,
 }) => {
   const badge = formatCallBadge(phase, score.lastCall, rallyShotCount);
 
@@ -314,57 +318,164 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
       {/* Right: Crisp Studio Action Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         {phase === 'ready' && onForceStart ? (
-          <button
-            type="button"
-            className="lab-btn"
-            onClick={onForceStart}
-            title="Start match immediately without waiting for :8000 ready (SPACE)"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              background: '#141413',
-              color: '#ffffff',
-              border: '1px solid #141413',
-              borderRadius: 6,
-              padding: '6px 12px',
-              fontSize: 12,
-              fontWeight: 500,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            <span>Start now</span>
-            <KeyHint label="SPACE" dark />
-          </button>
+          <>
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={onForceStart}
+              title="Start match immediately without waiting for :8000 ready (SPACE)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                background: '#141413',
+                color: '#ffffff',
+                border: '1px solid #141413',
+                borderRadius: 6,
+                padding: '5px 12px',
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <span>Start now</span>
+              <KeyHint label="SPACE" dark />
+            </button>
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={onRestart}
+              title="Restart match from 0:0 with a fresh match_id (Shift+R)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                background: '#fafaf8',
+                color: '#141413',
+                border: '1px solid #e5e4df',
+                borderRadius: 6,
+                padding: '5px 10px',
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2.2 4.5A4.2 4.2 0 1 1 2.5 8.3" />
+                <polyline points="2,1.8 2,4.7 4.9,4.7" />
+              </svg>
+              <span>Restart</span>
+              <KeyHint label="⇧R" />
+            </button>
+          </>
         ) : phase === 'demo_pause' ? (
-          <button
-            type="button"
-            className="lab-btn"
-            onClick={onResume}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              background: '#141413',
-              color: '#ffffff',
-              border: '1px solid #141413',
-              borderRadius: 6,
-              padding: '6px 12px',
-              fontSize: 12,
-              fontWeight: 500,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            <span>Continue match</span>
-            <KeyHint label="SPACE" dark />
-          </button>
+          <>
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={onResume}
+              title="Resume game (P or SPACE)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                background: '#059669',
+                color: '#ffffff',
+                border: '1px solid #047857',
+                borderRadius: 6,
+                padding: '5px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
+                <polygon points="2,1 9,5 2,9" />
+              </svg>
+              <span>Resume</span>
+              <KeyHint label="P" dark />
+            </button>
+            {onTogglePausedArcs && (
+              <button
+                type="button"
+                className="lab-btn"
+                onClick={onTogglePausedArcs}
+                title="Toggle 3D shot arc replay overlay while paused"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: showPausedArcs ? '#eff6ff' : '#fafaf8',
+                  color: showPausedArcs ? '#1d4ed8' : '#575652',
+                  border: `1px solid ${showPausedArcs ? '#bfdbfe' : '#e5e4df'}`,
+                  borderRadius: 6,
+                  padding: '5px 9px',
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                <span>{showPausedArcs ? '3D Arcs: ON' : '3D Arcs: OFF'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={onRestart}
+              title="Restart match from 0:0 with a fresh match_id (Shift+R)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                background: '#fafaf8',
+                color: '#141413',
+                border: '1px solid #e5e4df',
+                borderRadius: 6,
+                padding: '5px 10px',
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2.2 4.5A4.2 4.2 0 1 1 2.5 8.3" />
+                <polyline points="2,1.8 2,4.7 4.9,4.7" />
+              </svg>
+              <span>Restart</span>
+              <KeyHint label="⇧R" />
+            </button>
+          </>
         ) : phase === 'match_over' ? (
           <button
             type="button"
             className="lab-btn"
             onClick={onRestart}
+            title="Restart match from 0:0 with a fresh match_id (R or Shift+R)"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -380,7 +491,21 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               cursor: 'pointer',
             }}
           >
-            <span>New evaluation</span>
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M2.2 4.5A4.2 4.2 0 1 1 2.5 8.3" />
+              <polyline points="2,1.8 2,4.7 4.9,4.7" />
+            </svg>
+            <span>Restart</span>
             <KeyHint label="R" dark />
           </button>
         ) : (
@@ -390,6 +515,7 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               className="lab-btn"
               onClick={onTogglePause}
               disabled={phase === 'ready'}
+              title="Pause the match anytime (P)"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -405,30 +531,49 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
                 cursor: phase === 'ready' ? 'default' : 'pointer',
               }}
             >
-              <span>Inspect 3D arcs</span>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
+                <rect x="1.5" y="1" width="2.5" height="8" rx="0.6" />
+                <rect x="6" y="1" width="2.5" height="8" rx="0.6" />
+              </svg>
+              <span>Pause</span>
               <KeyHint label="P" />
             </button>
             <button
               type="button"
               className="lab-btn"
               onClick={onRestart}
-              title="Reset evaluation with a fresh match_id"
+              title="Restart match from 0:0 with a fresh match_id (Shift+R)"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 6,
-                background: 'transparent',
-                color: '#575652',
-                border: '1px solid transparent',
+                gap: 7,
+                background: '#fafaf8',
+                color: '#141413',
+                border: '1px solid #e5e4df',
                 borderRadius: 6,
-                padding: '5px 8px',
+                padding: '5px 10px',
                 fontSize: 12,
                 fontWeight: 500,
                 fontFamily: 'inherit',
                 cursor: 'pointer',
               }}
             >
-              <span>Reset</span>
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2.2 4.5A4.2 4.2 0 1 1 2.5 8.3" />
+                <polyline points="2,1.8 2,4.7 4.9,4.7" />
+              </svg>
+              <span>Restart</span>
+              <KeyHint label="⇧R" />
             </button>
           </>
         )}

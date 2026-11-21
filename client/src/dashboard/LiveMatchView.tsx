@@ -140,6 +140,7 @@ export const LiveMatchView: React.FC = () => {
     total: 0,
   });
   const [showSidePanels, setShowSidePanels] = useState(true);
+  const [showPausedArcs, setShowPausedArcs] = useState(true);
 
   const handleRestart = useCallback(() => {
     const engine = engineRef.current;
@@ -154,8 +155,10 @@ export const LiveMatchView: React.FC = () => {
     setRecentShots([]);
     setPointWinners([]);
     setRallyShotCount(0);
+    setLastSwing(null);
     setLastAiShot(null);
     setShotMix({ topspin: 0, slice: 0, dropshot: 0, fh: 0, total: 0 });
+    setShowPausedArcs(true);
     setPolicyVersion(0);
     setOpponentSpeed(TENNIS_SETTINGS_BOUNDS.opponent_speed.default);
     setVisualCue('balanced');
@@ -167,6 +170,7 @@ export const LiveMatchView: React.FC = () => {
 
     void readyPromise.then(() => {
       if (matchEpochRef.current !== epoch) return;
+      if (engine.getRenderState().phase !== 'ready') return;
       setPolicyVersion(brain.getActiveBehaviour().version);
       setOpponentSpeed(brain.getSettings().opponent_speed);
       engine.startMatch();
@@ -334,11 +338,14 @@ export const LiveMatchView: React.FC = () => {
       }
       if (e.code === 'KeyP') {
         e.preventDefault();
+        e.stopImmediatePropagation();
         if (curPhase === 'demo_pause') {
           engine.resumeFromDemoPause();
         } else {
           engine.triggerManualDemoPause();
         }
+        engine.syncToRenderState(matchStateRef.current);
+        setPhase(engine.getRenderState().phase);
       } else if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setShowSidePanels((prev) => !prev);
@@ -433,7 +440,11 @@ export const LiveMatchView: React.FC = () => {
   }, [handleRestart]);
 
   const handleResume = useCallback(() => {
-    engineRef.current?.resumeFromDemoPause();
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.resumeFromDemoPause();
+    eng.syncToRenderState(matchStateRef.current);
+    setPhase(eng.getRenderState().phase);
   }, []);
 
   const handleTogglePause = useCallback(() => {
@@ -444,6 +455,12 @@ export const LiveMatchView: React.FC = () => {
     } else {
       eng.triggerManualDemoPause();
     }
+    eng.syncToRenderState(matchStateRef.current);
+    setPhase(eng.getRenderState().phase);
+  }, []);
+
+  const handleTogglePausedArcs = useCallback(() => {
+    setShowPausedArcs((prev) => !prev);
   }, []);
 
   const handleToggleSidePanels = useCallback(() => {
@@ -480,9 +497,7 @@ export const LiveMatchView: React.FC = () => {
 
   const handleCanvasClick = useCallback(() => {
     const curPhase = engineRef.current?.getRenderState().phase;
-    if (curPhase === 'demo_pause') {
-      engineRef.current?.resumeFromDemoPause();
-    } else if (curPhase === 'ready') {
+    if (curPhase === 'ready') {
       handleForceStart();
     } else if (curPhase === 'rally') {
       hardwareInput.triggerManualSwing();
@@ -827,6 +842,8 @@ export const LiveMatchView: React.FC = () => {
             onRestart={handleRestart}
             onTogglePause={handleTogglePause}
             onForceStart={handleForceStart}
+            showPausedArcs={showPausedArcs}
+            onTogglePausedArcs={handleTogglePausedArcs}
           />
 
           {/* Studio Viewport Mat framing Akhil's 3D CourtScene (0 overlays over the court) */}
@@ -834,7 +851,7 @@ export const LiveMatchView: React.FC = () => {
             <SceneSlot
               containerRef={sceneContainerRef}
               matchStateRef={matchStateRef}
-              replayMode={phase === 'demo_pause'}
+              replayMode={phase === 'demo_pause' && showPausedArcs}
               replayArcs={recentShots}
               onCanvasClick={handleCanvasClick}
             />
@@ -972,7 +989,9 @@ export const LiveMatchView: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#8c8b85', flexShrink: 0, whiteSpace: 'nowrap' }}>
               <span>SPACE Swing</span>
               <span>·</span>
-              <span>P Replay</span>
+              <span>P Pause</span>
+              <span>·</span>
+              <span>⇧R Restart</span>
               <span>·</span>
               <span>R Zero</span>
               <span>·</span>
