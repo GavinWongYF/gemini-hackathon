@@ -30,7 +30,7 @@ function formatCallBadge(phase: MatchRenderState['phase'], rawCall: string, rall
     return { text: 'AWAITING READY', tone: 'neutral' };
   }
   if (phase === 'demo_pause') {
-    return { text: 'GAME PAUSED', tone: 'pause' };
+    return { text: 'STRATEGY PAUSE', tone: 'pause' };
   }
   if (phase === 'match_over') {
     return { text: 'EVALUATION COMPLETE', tone: 'accent' };
@@ -405,8 +405,8 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
                 <polygon points="2,1 9,5 2,9" />
               </svg>
-              <span>Resume</span>
-              <KeyHint label="P" dark />
+              <span>Continue</span>
+              <KeyHint label="ENTER" dark />
             </button>
             {onTogglePausedArcs && (
               <button
