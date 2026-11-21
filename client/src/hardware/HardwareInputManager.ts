@@ -130,6 +130,7 @@ export class HardwareInputManager {
   private lastImuPacketMs = 0;
   private imuPacketTimestamps: number[] = [];
   private started = false;
+  private trainingTarget: HumanShotType | null = null;
 
   start(wsUrl?: string) {
     if (this.started || typeof window === 'undefined') return;
@@ -259,6 +260,21 @@ export class HardwareInputManager {
     this.classifier.updateConfig(partial);
   }
 
+  setTrainingTarget(target: HumanShotType | null) {
+    this.trainingTarget = target;
+    this.notifyState();
+  }
+
+  getTrainingTarget(): HumanShotType | null {
+    return this.trainingTarget;
+  }
+
+  clearShotTraining() {
+    this.trainingTarget = null;
+    this.classifier.clearTraining();
+    this.notifyState();
+  }
+
   triggerManualSwing(overrides?: Partial<Omit<PlayerSwingEvent, 'id' | 'timestampMs'>>) {
     const now = performance.now();
     if (now - this.lastSwingMs < 240) return;
@@ -275,6 +291,7 @@ export class HardwareInputManager {
       power: clamp(overrides?.power ?? Math.max(0.55, current.gyro.power), 0.18, 1),
       rotation: clamp(overrides?.rotation ?? current.gyro.rotation, -1, 1),
       angle: clamp(overrides?.angle ?? current.gyro.angle, -1, 1),
+      confidence: overrides?.confidence ?? 0.95,
       peakAccelG: overrides?.peakAccelG ?? current.gyro.linearAccelG,
       peakGyroDps: overrides?.peakGyroDps ?? current.gyro.gyroRateDps,
       source: overrides?.source ?? current.source,
@@ -565,7 +582,6 @@ export class HardwareInputManager {
 
     const swing = this.classifier.ingest(sample, now);
     this.state.gyro = this.classifier.getLatestReading();
-    this.state.shotType = this.classifier.getLastShotType();
     this.state.calibration = this.classifier.getCalibrationPhase();
     this.state.calibrationProgress = this.classifier.getCalibrationProgress();
 
@@ -575,21 +591,50 @@ export class HardwareInputManager {
 
     if (swing) {
       this.lastSwingMs = now;
-      const arm = this.getState().arm;
+      // Resolve true pre-swing Forehand vs Backhand & vertical swing path (never fooled by follow-through!)
+      const armSummary = this.webcam.getSwingArmSummary(swing.swingStartMs, swing.swingEndMs);
+      const armFallback = this.getState().arm;
+      const wing = armSummary.hasWebcamData ? armSummary.wing : armFallback.wing;
+      const armZone = armSummary.hasWebcamData ? armSummary.armZone : armFallback.armZone;
+      const armX = armSummary.hasWebcamData ? armSummary.armX : armFallback.armX;
+
+      // Refine shot type (topspin / slice / dropshot) using wing-corrected racket face + webcam ΔarmY!
+      const resolved = this.classifier.resolveShot(
+        swing,
+        wing,
+        armSummary.deltaArmY,
+        armSummary.hasWebcamData,
+      );
+
+      let finalShotType = resolved.shotType;
+      let finalConfidence = resolved.confidence;
+      if (this.trainingTarget) {
+        this.classifier.addTrainingExample(this.trainingTarget, resolved.features);
+        finalShotType = this.trainingTarget;
+        finalConfidence = 1.0;
+        this.trainingTarget = null;
+        this.notifyState();
+      }
+
+      this.state.shotType = finalShotType;
+
       this.emitSwing({
         id: ++this.swingCounter,
         timestampMs: Date.now(),
-        shotType: swing.shotType,
-        wing: arm.wing,
-        armZone: arm.armZone,
-        armX: arm.armX,
+        shotType: finalShotType,
+        wing,
+        armZone,
+        armX,
         power: swing.power,
-        rotation: swing.rotation,
+        rotation: resolved.rotation,
         angle: swing.angle,
+        confidence: finalConfidence,
         peakAccelG: swing.peakAccelG,
         peakGyroDps: swing.peakGyroDps,
         source,
       });
+    } else {
+      this.state.shotType = this.classifier.getLastShotType();
     }
   }
 

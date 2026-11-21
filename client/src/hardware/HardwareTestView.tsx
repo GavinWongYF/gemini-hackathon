@@ -18,6 +18,8 @@ export const HardwareTestView: React.FC = () => {
   const [bleError, setBleError] = useState<string | null>(null);
   const [swings, setSwings] = useState<PlayerSwingEvent[]>([]);
   const [config, setConfig] = useState<ImuClassifierConfig>(() => ({ ...DEFAULT_IMU_CONFIG }));
+  const [trainingTarget, setTrainingTarget] = useState<'topspin' | 'slice' | 'dropshot' | null>(null);
+  const [trainingState, setTrainingState] = useState(() => hardwareInput.classifier.getTrainingState());
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -31,6 +33,8 @@ export const HardwareTestView: React.FC = () => {
     });
     const unsubSwing = hardwareInput.onSwing((evt) => {
       setSwings((prev) => [evt, ...prev].slice(0, 12));
+      setTrainingTarget(hardwareInput.getTrainingTarget());
+      setTrainingState(hardwareInput.classifier.getTrainingState());
     });
 
     // Single smooth rAF loop: draws skeleton at 60 FPS with zero React lag,
@@ -381,6 +385,7 @@ export const HardwareTestView: React.FC = () => {
                   <span>
                     {latestSwing.peakAccelG.toFixed(2)}g / {latestSwing.peakGyroDps.toFixed(0)}°/s
                   </span>
+                  <span>CONF {((latestSwing.confidence ?? 0) * 100).toFixed(0)}%</span>
                 </div>
               </>
             ) : (
@@ -388,6 +393,55 @@ export const HardwareTestView: React.FC = () => {
                 Click "Connect M5 Wireless (Bluetooth)" → pick M5-TENNIS-IMU → unplug USB-C &amp; swing!
               </div>
             )}
+          </div>
+
+          <div style={styles.trainBox}>
+            <div style={styles.trainHeader}>
+              <span>
+                <strong>Quick Personal Classifier</strong>{' '}
+                {trainingState.active ? '✅ PERSONALIZED (5D)' : '(Record 1+ swing each for ~95% accuracy)'}
+              </span>
+              {trainingState.counts.topspin +
+                trainingState.counts.slice +
+                trainingState.counts.dropshot >
+                0 && (
+                <button
+                  style={styles.clearBtn}
+                  onClick={() => {
+                    hardwareInput.clearShotTraining();
+                    setTrainingTarget(null);
+                    setTrainingState(hardwareInput.classifier.getTrainingState());
+                  }}
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <div style={styles.trainBtns}>
+              {(['topspin', 'slice', 'dropshot'] as const).map((st) => {
+                const armed = trainingTarget === st;
+                return (
+                  <button
+                    key={st}
+                    style={{
+                      ...styles.trainBtn,
+                      borderColor: armed ? '#fff' : SHOT_COLORS[st],
+                      background: armed ? SHOT_COLORS[st] : '#0f172a',
+                      color: armed ? '#031525' : '#f1f5f9',
+                    }}
+                    onClick={() => {
+                      const next = armed ? null : st;
+                      hardwareInput.setTrainingTarget(next);
+                      setTrainingTarget(next);
+                    }}
+                  >
+                    {armed
+                      ? `Swing ${st.toUpperCase()} now...`
+                      : `Teach ${st.toUpperCase()} (${trainingState.counts[st]})`}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div style={styles.slidersBox}>
@@ -409,8 +463,16 @@ export const HardwareTestView: React.FC = () => {
               onChange={(v) => updateCfg('armGyroDps', v)}
             />
             <SliderRow
+              label={`Slow Dropshot Min G (${config.dropAccelG.toFixed(2)}g)`}
+              min={0.2}
+              max={1.0}
+              step={0.02}
+              value={config.dropAccelG}
+              onChange={(v) => updateCfg('dropAccelG', v)}
+            />
+            <SliderRow
               label={`Dropshot Max Power (${config.dropshotPowerMax.toFixed(2)})`}
-              min={0.18}
+              min={0.22}
               max={0.6}
               step={0.02}
               value={config.dropshotPowerMax}
@@ -772,6 +834,40 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   emptySwing: { fontSize: 13, color: '#64748b', textAlign: 'center', padding: '6px 0' },
+  trainBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    background: '#090d16',
+    border: '1px solid #334155',
+    borderRadius: 10,
+    padding: 10,
+  },
+  trainHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    fontSize: 12,
+    color: '#cbd5e1',
+  },
+  trainBtns: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 },
+  trainBtn: {
+    padding: '8px 6px',
+    borderRadius: 8,
+    border: '1px solid #334155',
+    fontSize: 11,
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  clearBtn: {
+    padding: '2px 8px',
+    borderRadius: 6,
+    border: '1px solid #475569',
+    background: 'transparent',
+    color: '#94a3b8',
+    fontSize: 11,
+    cursor: 'pointer',
+  },
   slidersBox: {
     display: 'flex',
     flexDirection: 'column',

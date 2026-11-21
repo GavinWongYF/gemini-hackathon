@@ -332,27 +332,48 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
     },
     events: {
       shot: {
-        about: 'Either side hit the ball.',
+        about: 'Either side hit the ball (emitted once per shot at racket-ball contact with solved landing zone and result).',
         fields: {
           rally: 'number',
           side: ['forehand', 'backhand'],
           arm_zone: 'arm_zone',
           shot_type: ['topspin', 'flat', 'slice', 'dropshot', 'lob'],
-          power: { min: 0, max: 1, about: 'How hard the swing was (M5 IMU).' },
+          power: { min: 0, max: 1, about: 'How hard the swing was (M5 IMU peak accel + gyro).' },
           rotation: {
             min: -1,
             max: 1,
-            about: 'Spin from wrist/gyro. Below 0 is backspin/slice, above 0 is topspin.',
+            about: 'Spin fused from racket face + webcam vertical path. Below 0 is backspin/slice, above 0 is topspin.',
           },
           angle: {
             min: -1,
             max: 1,
-            about: 'Horizontal aim direction. -1 is far left on screen, 1 is far right.',
+            about: 'Horizontal aim direction from gyro yaw. -1 is far left on screen, 1 is far right (noisier than lands zone).',
+          },
+          confidence: {
+            min: 0,
+            max: 1,
+            about: 'Classifier + webcam pose confidence in the player shot_type and side labels.',
+          },
+          timing: ['early', 'on_time', 'late'],
+          quality: {
+            min: 0,
+            max: 1,
+            about: 'Contact quality based on lateral/depth reach and ball height (low when stretched or jammed).',
           },
           from: 'zone',
           other_position: 'zone',
           lands: 'zone',
           result: ['in', 'out', 'net'],
+        },
+      },
+      missed_swing: {
+        about: 'The player swung the physical racket during a rally but missed the ball.',
+        fields: {
+          side: ['forehand', 'backhand'],
+          arm_zone: 'arm_zone',
+          shot_type: 'human_shot_type',
+          power: { min: 0, max: 1, about: 'How hard the missed swing was.' },
+          reason: ['unreachable', 'too_early', 'too_late'],
         },
       },
     },

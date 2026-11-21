@@ -17,6 +17,7 @@ import {
   type PlayerControlState,
   type PlayerSwingEvent,
   type RecordedShot,
+  type ShotTiming,
   type StrategyVisualCue,
   type StrokeWing,
   type TrajectoryPoint,
@@ -313,7 +314,10 @@ export class TennisMatchEngine {
    * Returns true if the swing connected with the ball.
    */
   handlePlayerSwing(
-    swing: Pick<PlayerSwingEvent, 'shotType' | 'wing' | 'armZone' | 'armX' | 'power' | 'rotation' | 'angle'>,
+    swing: Pick<
+      PlayerSwingEvent,
+      'shotType' | 'wing' | 'armZone' | 'armX' | 'power' | 'rotation' | 'angle' | 'confidence'
+    >,
     opts?: {
       /** Optional explicit target zone (used by headless scripted persona) */
       targetZoneOverride?: CourtZone;
@@ -324,18 +328,60 @@ export class TennisMatchEngine {
     },
   ): boolean {
     const p = this.renderState.player;
+    const b = this.ballEngine.state;
     p.swingSide = swing.wing;
     p.swingShotType = swing.shotType;
     p.swingTriggerId += 1;
 
     if (!this.isBallReturnableByPlayer() || opts?.forceMiss) {
+      if (this.renderState.phase === 'rally' && this.hitter === 'ai' && b.active) {
+        const missReason: 'unreachable' | 'too_early' | 'too_late' = opts?.forceMiss
+          ? 'unreachable'
+          : b.z < 1.5
+            ? 'too_early'
+            : b.bounceCount >= 2 || b.z > p.z + 1.2
+              ? 'too_late'
+              : 'unreachable';
+        this.sink.onAgentEvent?.({
+          name: 'missed_swing',
+          round: this.renderState.score.pointIndex,
+          t: round2(this.matchTimeSec),
+          by: 'player',
+          data: {
+            side: swing.wing,
+            arm_zone: swing.armZone,
+            shot_type: swing.shotType,
+            power: round2(swing.power),
+            reason: missReason,
+          },
+        });
+      }
       return false;
     }
 
     const assessment = this.assessPlayerContact(swing.wing, opts?.weaknessPenalty ?? 0);
     if (!assessment.reachable) {
+      this.sink.onAgentEvent?.({
+        name: 'missed_swing',
+        round: this.renderState.score.pointIndex,
+        t: round2(this.matchTimeSec),
+        by: 'player',
+        data: {
+          side: swing.wing,
+          arm_zone: swing.armZone,
+          shot_type: swing.shotType,
+          power: round2(swing.power),
+          reason: 'unreachable',
+        },
+      });
       return false;
     }
+
+    // Compute early / on_time / late relative to ideal strike plane (~0.85m in front of player)
+    const idealContactZ = p.z - 0.85;
+    const timingOffsetZ = b.z - idealContactZ;
+    const timing: ShotTiming =
+      timingOffsetZ < -0.65 ? 'early' : timingOffsetZ > 0.55 ? 'late' : 'on_time';
 
     this.playerLastSide = swing.wing;
     this.playerLastShotType = swing.shotType;
@@ -442,7 +488,7 @@ export class TennisMatchEngine {
       playerPosAtShot: { x: p.x, z: p.z },
     });
 
-    // Emit Felix & Gavin Draft 2 player `shot` event immediately
+    // Emit Felix & Gavin Draft 2 player `shot` event immediately at contact
     this.sink.onAgentEvent?.({
       name: 'shot',
       round: this.renderState.score.pointIndex,
@@ -456,6 +502,9 @@ export class TennisMatchEngine {
         power: round2(swing.power),
         rotation: round2(swing.rotation),
         angle: round2(swing.angle),
+        confidence: round2(swing.confidence ?? 0.85),
+        timing,
+        quality: round2(assessment.quality),
         from: fromZone,
         other_position: otherZone,
         lands: landZone,

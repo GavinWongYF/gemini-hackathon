@@ -131,6 +131,8 @@ export interface PlayerControlState {
   imuHz: number;
 }
 
+export type ShotTiming = 'early' | 'on_time' | 'late';
+
 export interface PlayerSwingEvent {
   id: number;
   timestampMs: number;
@@ -144,6 +146,8 @@ export interface PlayerSwingEvent {
   rotation: number;
   /** Normalized horizontal aim -1 (far left) .. +1 (far right) */
   angle: number;
+  /** Classifier + pose confidence 0..1 in the shotType/wing label */
+  confidence?: number;
   /** Peak linear acceleration in g during the swing */
   peakAccelG: number;
   /** Peak angular velocity in deg/s during the swing */
