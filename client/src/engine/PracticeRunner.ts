@@ -6,15 +6,16 @@
 // Runs the EXACT same BallFlightEngine + TennisMatchEngine + OpponentBrain (`pick()`) as live play,
 // at >500x real-time with zero DOM / Three.js / React dependencies.
 
-import type {
-  AgentPracticeRunMessage,
-  ArmZone,
-  BehaviourJson,
-  CourtZone,
-  GamePracticeResultMessage,
-  HumanShotType,
-  PracticePersona,
-  StrokeWing,
+import {
+  COURT,
+  type AgentPracticeRunMessage,
+  type ArmZone,
+  type BehaviourJson,
+  type CourtZone,
+  type GamePracticeResultMessage,
+  type HumanShotType,
+  type PracticePersona,
+  type StrokeWing,
 } from '@shared/contracts';
 import {
   TENNIS_COURT_ZONES,
@@ -340,12 +341,10 @@ export function runPracticeBatch(
         });
       }
 
-      // Wait until the sprinting player has closed onto the ball (or last-moment lunge before 2nd bounce)
-      const pZ = engine.getRenderState().player.z;
+      // Stationary player strikes once the incoming ball has bounced into the readable strike window
       const inStrikeZone =
-        (b.bounceCount === 1 &&
-          (Math.abs(b.z - pZ) <= 1.35 || b.z >= pZ - 1.1 || (b.vy < -1.8 && b.y < 0.38))) ||
-        (b.bounceCount === 0 && b.z >= pZ - 1.1);
+        (b.bounceCount === 1 && (b.z >= 7.2 || b.vy < 0.6)) ||
+        (b.bounceCount === 0 && b.z >= COURT.PLAYER_START_Z - 1.1);
       if (inStrikeZone && swingAttemptedForBounceKey !== bounceKey) {
         swingAttemptedForBounceKey = bounceKey;
 
@@ -362,21 +361,23 @@ export function runPracticeBatch(
         // Compute realistic vulnerability from opponent's chosen shot & aim!
         const shotVuln = oppCtx ? (profile.shotVulnerability[oppCtx.shotType] ?? 0.06) : 0.04;
         const baseAimVuln = oppCtx ? (profile.aimVulnerability[oppCtx.aim] ?? 0.06) : 0.04;
-        // Dropshots always land short even when `aim` was `middle_deep`, so apply short-court aim vulnerability!
         const aimVuln =
           oppCtx?.shotType === 'dropshot'
             ? Math.max(baseAimVuln, profile.aimVulnerability.left_short ?? 0.1)
             : baseAimVuln;
-        // If player is already stepped inside the court (< 8.2m), dropshots lose their surprise advantage!
-        const rawWeakness = Math.min(0.62, shotVuln * 0.62 + aimVuln * 0.62);
-        const weaknessPenalty =
-          oppCtx?.shotType === 'dropshot' && pZ < 8.2 ? rawWeakness * 0.25 : rawWeakness;
+        const weaknessPenalty = Math.min(0.58, shotVuln * 0.58 + aimVuln * 0.58);
+        const forceMiss = weaknessPenalty > 0.36 && rng() < (weaknessPenalty - 0.24) * 0.5;
 
-        // If ball hits a strong vulnerability AND player was caught deep, occasional late miss
-        const missRoll = rng();
-        const forceMiss = weaknessPenalty > 0.34 && missRoll < (weaknessPenalty - 0.2) * 0.55;
-
-        const chosenShot = sampleWeighted(profile.shotTypeWeights, rng);
+        // Balanced `even` player adapts stroke choice naturally to the incoming ball; habit players stick to their habit!
+        const isBalancedPlayer = profile.name === 'even';
+        const chosenShot: HumanShotType =
+          isBalancedPlayer && oppCtx?.shotType === 'dropshot'
+            ? rng() < 0.65
+              ? 'slice'
+              : 'dropshot'
+            : isBalancedPlayer && oppCtx?.shotType === 'slice' && rng() < 0.55
+              ? 'slice'
+              : sampleWeighted(profile.shotTypeWeights, rng);
         const chosenTarget = sampleWeighted(profile.targetZoneWeights, rng);
         const simConf = Math.max(0.58, Math.min(0.96, 0.88 - weaknessPenalty * 0.25 + (rng() * 2 - 1) * 0.06));
 

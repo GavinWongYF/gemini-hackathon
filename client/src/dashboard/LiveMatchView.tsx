@@ -36,6 +36,12 @@ interface SwingTelemetrySnapshot {
   confidence: number;
 }
 
+interface OpponentShotSnapshot {
+  shotType: string;
+  lands: string;
+  byRule: boolean;
+}
+
 const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
 
 const CUE_LABELS: Record<StrategyVisualCue, { label: string; color: string }> = {
@@ -125,6 +131,14 @@ export const LiveMatchView: React.FC = () => {
   const [armZone, setArmZone] = useState<ArmZone>('center');
   const [strikeWindowLive, setStrikeWindowLive] = useState(false);
   const [lastSwing, setLastSwing] = useState<SwingTelemetrySnapshot | null>(null);
+  const [lastAiShot, setLastAiShot] = useState<OpponentShotSnapshot | null>(null);
+  const [shotMix, setShotMix] = useState<{ topspin: number; slice: number; dropshot: number; fh: number; total: number }>({
+    topspin: 0,
+    slice: 0,
+    dropshot: 0,
+    fh: 0,
+    total: 0,
+  });
   const [showSidePanels, setShowSidePanels] = useState(true);
 
   const handleRestart = useCallback(() => {
@@ -140,6 +154,8 @@ export const LiveMatchView: React.FC = () => {
     setRecentShots([]);
     setPointWinners([]);
     setRallyShotCount(0);
+    setLastAiShot(null);
+    setShotMix({ topspin: 0, slice: 0, dropshot: 0, fh: 0, total: 0 });
     setPolicyVersion(0);
     setOpponentSpeed(TENNIS_SETTINGS_BOUNDS.opponent_speed.default);
     setVisualCue('balanced');
@@ -176,10 +192,31 @@ export const LiveMatchView: React.FC = () => {
     const agent = new AgentClient({
       mode: 'live',
       callbacks: {
-        onStatus: setAgentStatus,
+        onStatus: (status) => {
+          setAgentStatus(status);
+          // If :8000 came online AFTER /match loaded, dynamically retry loading panels.js once!
+          if (
+            status === 'connected' &&
+            typeof customElements !== 'undefined' &&
+            !customElements.get('npc-panel') &&
+            !document.querySelector('script[data-npc-panels-retry]')
+          ) {
+            const s = document.createElement('script');
+            s.type = 'module';
+            s.dataset.npcPanelsRetry = '1';
+            s.src = `http://localhost:8000/screen/panels.js?t=${Date.now()}`;
+            s.onerror = () => s.remove();
+            document.head.appendChild(s);
+          }
+        },
         onReady: (msg) => {
-          brain.applyReadyBehaviour(msg.behaviour);
-          setPolicyVersion(msg.behaviour.version);
+          if (engineRef.current && engineRef.current.getRenderState().phase !== 'ready') {
+            // Presenter force-started before `ready` arrived -> apply cleanly at next point gap
+            brain.queueStrategyUpdate({ behaviour: msg.behaviour });
+          } else {
+            brain.applyReadyBehaviour(msg.behaviour);
+            setPolicyVersion(msg.behaviour.version);
+          }
         },
         onPlayerRead: (msg) => {
           brain.updatePlayerValues(msg.values);
@@ -199,6 +236,23 @@ export const LiveMatchView: React.FC = () => {
       sink: {
         onAgentEvent: (evt) => {
           agent.sendEvent(evt);
+          if (evt.name === 'shot' && evt.by === 'opponent') {
+            setLastAiShot({
+              shotType: String(evt.data.shot_type ?? 'topspin').toUpperCase(),
+              lands: String(evt.data.lands ?? 'middle_deep').toUpperCase(),
+              byRule: Array.isArray(evt.by_rule) && evt.by_rule.length > 0,
+            });
+          } else if (evt.name === 'shot' && evt.by === 'player') {
+            const st = evt.data.shot_type;
+            const sd = evt.data.side;
+            setShotMix((prev) => ({
+              topspin: prev.topspin + (st === 'topspin' ? 1 : 0),
+              slice: prev.slice + (st === 'slice' ? 1 : 0),
+              dropshot: prev.dropshot + (st === 'dropshot' ? 1 : 0),
+              fh: prev.fh + (sd === 'forehand' ? 1 : 0),
+              total: prev.total + 1,
+            }));
+          }
         },
         onAgentRoundEnd: (roundEnd) => {
           agent.sendRoundEnd(roundEnd);
@@ -232,6 +286,7 @@ export const LiveMatchView: React.FC = () => {
 
     void agent.connectAndSetup().then(() => {
       if (cancelled || matchEpochRef.current !== initialEpoch) return;
+      if (engine.getRenderState().phase !== 'ready') return;
       setPolicyVersion(brain.getActiveBehaviour().version);
       engine.startMatch();
       engine.syncToRenderState(matchStateRef.current);
@@ -254,12 +309,24 @@ export const LiveMatchView: React.FC = () => {
       });
     });
 
-    // Capture-phase listener so Space during `demo_pause` resumes cleanly without also firing a manual swing
+    // Capture-phase listener so Space during `ready`/`demo_pause` acts cleanly without firing a swing,
+    // and Shift+R (or R on match_over) resets the match without colliding with plain R M5 zeroing!
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
-      if ((e.code === 'Space' || e.code === 'Enter') && engine.getRenderState().phase === 'demo_pause') {
+      const curPhase = engine.getRenderState().phase;
+      if ((e.code === 'Space' || e.code === 'Enter') && curPhase === 'ready') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setPolicyVersion(brain.getActiveBehaviour().version);
+        engine.startMatch();
+        engine.syncToRenderState(matchStateRef.current);
+        setPhase(engine.getRenderState().phase);
+        setScore({ ...engine.getRenderState().score });
+        return;
+      }
+      if ((e.code === 'Space' || e.code === 'Enter') && curPhase === 'demo_pause') {
         e.preventDefault();
         e.stopImmediatePropagation();
         engine.resumeFromDemoPause();
@@ -267,7 +334,7 @@ export const LiveMatchView: React.FC = () => {
       }
       if (e.code === 'KeyP') {
         e.preventDefault();
-        if (engine.getRenderState().phase === 'demo_pause') {
+        if (curPhase === 'demo_pause') {
           engine.resumeFromDemoPause();
         } else {
           engine.triggerManualDemoPause();
@@ -275,8 +342,14 @@ export const LiveMatchView: React.FC = () => {
       } else if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setShowSidePanels((prev) => !prev);
-      } else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) {
+      } else if (
+        e.code === 'KeyR' &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        (e.shiftKey || curPhase === 'match_over')
+      ) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         handleRestart();
       }
     };
@@ -297,16 +370,17 @@ export const LiveMatchView: React.FC = () => {
       engine.step(dt);
       engine.syncToRenderState(matchStateRef.current);
 
-      // Gate IMU + Webcam swing detection ONLY to when an incoming ball is approaching
-      // the player's hitting zone, and feed ball lateral offset for accurate FH/BH!
+      // Gate IMU + Webcam swing detection ONLY to when an incoming ball is in its playable
+      // return window (covering serves that bounce at z~5.5m and carry past the baseline to z~12.5m!).
       const b = matchStateRef.current.ball;
       const p = matchStateRef.current.player;
       const incomingToPlayer =
         matchStateRef.current.phase === 'rally' &&
         b.active &&
         b.vz > 0 &&
-        b.z > -1.0 &&
-        b.z < p.z + 1.4;
+        b.bounceCount < 2 &&
+        b.z > 0.5 &&
+        b.z <= Math.max(p.z + 4.2, 13.5);
       hardwareInput.setStrikeWindow(incomingToPlayer, b.x - p.x);
 
       if (now - lastHudSyncMs >= 200) {
@@ -388,13 +462,32 @@ export const LiveMatchView: React.FC = () => {
     hardwareInput.zeroRacket();
   }, []);
 
+  const handleConnectBle = useCallback(() => {
+    void hardwareInput.connectBle();
+  }, []);
+
+  const handleForceStart = useCallback(() => {
+    const engine = engineRef.current;
+    const brain = brainRef.current;
+    if (!engine || !brain) return;
+    if (engine.getRenderState().phase !== 'ready') return;
+    setPolicyVersion(brain.getActiveBehaviour().version);
+    engine.startMatch();
+    engine.syncToRenderState(matchStateRef.current);
+    setPhase(engine.getRenderState().phase);
+    setScore({ ...engine.getRenderState().score });
+  }, []);
+
   const handleCanvasClick = useCallback(() => {
-    if (engineRef.current?.getRenderState().phase === 'demo_pause') {
-      engineRef.current.resumeFromDemoPause();
-    } else if (engineRef.current?.getRenderState().phase !== 'ready') {
+    const curPhase = engineRef.current?.getRenderState().phase;
+    if (curPhase === 'demo_pause') {
+      engineRef.current?.resumeFromDemoPause();
+    } else if (curPhase === 'ready') {
+      handleForceStart();
+    } else if (curPhase === 'rally') {
       hardwareInput.triggerManualSwing();
     }
-  }, []);
+  }, [handleForceStart]);
 
   const isOfflineNotAdapting = agentStatus === 'mock' || agentStatus === 'disconnected';
 
@@ -488,11 +581,45 @@ export const LiveMatchView: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          <TelemetryPill
-            dotColor={imuConnected ? (imuCalibrated ? '#059669' : '#d97706') : '#c8c7c0'}
-            label="IMU"
-            detail={imuConnected ? `${imuHz}HZ` : 'KEY'}
-          />
+          <button
+            type="button"
+            className="lab-btn"
+            onClick={handleConnectBle}
+            title={
+              imuConnected
+                ? 'M5 IMU live — click to switch Web Bluetooth device'
+                : 'Click to pair M5-TENNIS-IMU over Web Bluetooth (or run ble_bridge.py)'
+            }
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 24,
+              padding: '0 8px',
+              borderRadius: 5,
+              background: '#fafaf8',
+              border: '1px solid #e5e4df',
+              fontFamily: MONO,
+              fontSize: 10.5,
+              fontWeight: 500,
+              color: '#141413',
+              letterSpacing: '0.02em',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: imuConnected ? (imuCalibrated ? '#059669' : '#d97706') : '#c8c7c0',
+                flexShrink: 0,
+              }}
+            />
+            <span>IMU</span>
+            <span style={{ color: '#8c8b85' }}>{imuConnected ? `${imuHz}HZ` : 'PAIR'}</span>
+          </button>
           {imuConnected && (
             <button
               type="button"
@@ -699,6 +826,7 @@ export const LiveMatchView: React.FC = () => {
             onResume={handleResume}
             onRestart={handleRestart}
             onTogglePause={handleTogglePause}
+            onForceStart={handleForceStart}
           />
 
           {/* Studio Viewport Mat framing Akhil's 3D CourtScene (0 overlays over the court) */}
@@ -715,59 +843,36 @@ export const LiveMatchView: React.FC = () => {
           {/* Bottom Tabular Kinematics & Policy Telemetry Strip (below court, never over court) */}
           <footer
             style={{
-              height: 32,
+              minHeight: 32,
               flexShrink: 0,
               display: 'flex',
+              flexWrap: 'wrap',
               alignItems: 'center',
               justifyContent: 'space-between',
-              padding: '0 14px',
+              padding: '4px 12px',
               background: '#ffffff',
               borderTop: '1px solid #e5e4df',
               fontFamily: MONO,
               fontVariantNumeric: 'tabular-nums',
               fontSize: 10.5,
               color: '#575652',
-              gap: 12,
-              overflow: 'hidden',
+              columnGap: 12,
+              rowGap: 4,
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, whiteSpace: 'nowrap' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: '#8c8b85' }}>SHOT</span>
-                {lastSwing ? (
-                  <>
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '1px 7px',
-                        borderRadius: 4,
-                        fontWeight: 700,
-                        fontSize: 10.5,
-                        color: '#ffffff',
-                        background:
-                          lastSwing.shotType === 'SLICE'
-                            ? '#d97706'
-                            : lastSwing.shotType === 'DROPSHOT'
-                              ? '#059669'
-                              : '#0284c7',
-                      }}
-                    >
-                      {lastSwing.wing} {lastSwing.shotType}
-                    </span>
-                    <span style={{ color: '#575652', fontWeight: 400 }}>
-                      PWR {lastSwing.power.toFixed(2)} · SPIN {lastSwing.rotation >= 0 ? '+' : ''}
-                      {lastSwing.rotation.toFixed(2)} · {lastSwing.confidence}%
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ color: '#a1a1aa' }}>—</span>
-                )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 3, minWidth: 0 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#8c8b85' }}>OPPONENT</span>
+                <span style={{ color: '#141413', fontWeight: 600 }}>v{policyVersion}</span>
+                <span style={{ color: '#8c8b85' }}>·</span>
+                <span style={{ color: '#141413' }}>{opponentSpeed.toFixed(2)}x</span>
+                <span style={{ color: '#8c8b85' }}>·</span>
+                <span style={{ color: cueMeta.color, fontWeight: 500 }}>{cueMeta.label}</span>
               </span>
 
               <span style={{ color: '#e5e4df' }}>|</span>
 
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
                 <span
                   style={{
                     width: 6,
@@ -777,33 +882,99 @@ export const LiveMatchView: React.FC = () => {
                   }}
                 />
                 <span style={{ color: strikeWindowLive ? '#059669' : '#8c8b85', fontWeight: 600 }}>
-                  {strikeWindowLive ? 'SWING READY' : 'WAIT BALL'}
+                  {strikeWindowLive ? 'READY' : 'WAIT'}
                 </span>
               </span>
 
               <span style={{ color: '#e5e4df' }}>|</span>
 
-              <span>
-                <span style={{ color: '#8c8b85' }}>STANCE </span>
-                <span style={{ color: '#141413', fontWeight: 500 }}>{armZone.toUpperCase()}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#8c8b85' }}>SHOT</span>
+                {lastSwing ? (
+                  <>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        fontWeight: 700,
+                        fontSize: 10,
+                        color: '#ffffff',
+                        background:
+                          lastSwing.shotType === 'SLICE'
+                            ? '#d97706'
+                            : lastSwing.shotType === 'DROPSHOT'
+                              ? '#059669'
+                              : '#0284c7',
+                      }}
+                    >
+                      {lastSwing.wing === 'FOREHAND' ? 'FH' : 'BH'} {lastSwing.shotType}
+                    </span>
+                    <span style={{ color: '#575652', fontWeight: 400 }}>
+                      {lastSwing.power.toFixed(2)} · {lastSwing.rotation >= 0 ? '+' : ''}
+                      {lastSwing.rotation.toFixed(2)}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: '#a1a1aa' }}>—</span>
+                )}
               </span>
 
               <span style={{ color: '#e5e4df' }}>|</span>
 
-              <span>
-                <span style={{ color: '#8c8b85' }}>OPPONENT </span>
-                <span style={{ color: '#141413', fontWeight: 500 }}>v{policyVersion}</span>{' '}
-                <span style={{ color: '#8c8b85' }}>· SPD</span>{' '}
-                <span style={{ color: '#141413' }}>{opponentSpeed.toFixed(2)}x</span>{' '}
-                <span style={{ color: '#8c8b85' }}>·</span>{' '}
-                <span style={{ color: cueMeta.color, fontWeight: 500 }}>{cueMeta.label}</span>
+              <span style={{ whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#8c8b85' }}>MIX </span>
+                {shotMix.total > 0 ? (
+                  <span style={{ color: '#141413', fontWeight: 500 }}>
+                    TOP {Math.round((shotMix.topspin / shotMix.total) * 100)}% · SLC{' '}
+                    {Math.round((shotMix.slice / shotMix.total) * 100)}% · DRP{' '}
+                    {Math.round((shotMix.dropshot / shotMix.total) * 100)}%{' '}
+                    <span style={{ color: '#8c8b85', fontWeight: 400 }}>
+                      (FH {Math.round((shotMix.fh / shotMix.total) * 100)}%)
+                    </span>
+                  </span>
+                ) : (
+                  <span style={{ color: '#a1a1aa' }}>—</span>
+                )}
+              </span>
+
+              <span style={{ color: '#e5e4df' }}>|</span>
+
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#8c8b85' }}>AI</span>
+                {lastAiShot ? (
+                  <>
+                    <span style={{ color: '#141413', fontWeight: 600 }}>
+                      {lastAiShot.shotType} → {lastAiShot.lands}
+                    </span>
+                    {lastAiShot.byRule && (
+                      <span
+                        style={{
+                          padding: '1px 5px',
+                          borderRadius: 3,
+                          background: '#141413',
+                          color: '#ffffff',
+                          fontSize: 9.5,
+                          fontWeight: 600,
+                        }}
+                      >
+                        RULE
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span style={{ color: '#a1a1aa' }}>—</span>
+                )}
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#8c8b85', flexShrink: 0, whiteSpace: 'nowrap' }}>
-              <span>CLICK / SPACE Swing</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#8c8b85', flexShrink: 0, whiteSpace: 'nowrap' }}>
+              <span>SPACE Swing</span>
               <span>·</span>
-              <span>P 3D Replay</span>
+              <span>P Replay</span>
+              <span>·</span>
+              <span>R Zero</span>
               <span>·</span>
               <span>F Cinema</span>
             </div>

@@ -294,20 +294,19 @@ export class BallFlightEngine {
         if (s.shotType === 'slice') {
           s.vy = clamp(s.vy * 0.9, 3.4, 4.1);
         } else if (s.shotType === 'dropshot') {
-          s.vy = clamp(s.vy * 0.92, 3.0, 3.8);
+          s.vy = clamp(s.vy * 0.98, 3.6, 4.3);
         } else {
           s.vy = clamp(s.vy * 1.06, 4.2, 5.0);
         }
 
-        // Guarantee non-dropshot AI shots reach past the baseline (z >= 12.2m) before 2nd bounce
-        if (s.shotType !== 'dropshot') {
-          const airtime = Math.max(0.65, (2 * s.vy) / PHYSICS.GRAVITY);
-          const minCarryVz = Math.max(0, 12.2 - s.z) / airtime;
-          if (s.vz < minCarryVz) {
-            const boost = minCarryVz / Math.max(0.5, s.vz);
-            s.vz = minCarryVz;
-            s.vx *= Math.min(1.3, boost);
-          }
+        // Guarantee AI shots stay alive comfortably into the stationary player's strike window
+        const targetCarryZ = s.shotType === 'dropshot' ? 8.6 : 12.2;
+        const airtime = Math.max(0.68, (2 * s.vy) / PHYSICS.GRAVITY);
+        const minCarryVz = Math.max(0, targetCarryZ - s.z) / airtime;
+        if (s.vz < minCarryVz) {
+          const boost = minCarryVz / Math.max(0.5, s.vz);
+          s.vz = minCarryVz;
+          s.vx *= Math.min(1.3, boost);
         }
       }
 

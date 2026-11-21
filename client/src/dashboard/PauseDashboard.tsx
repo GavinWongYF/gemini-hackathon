@@ -15,6 +15,7 @@ export interface CourtToolbarProps {
   onResume: () => void;
   onRestart: () => void;
   onTogglePause: () => void;
+  onForceStart?: () => void;
 }
 
 const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -72,6 +73,7 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
   onResume,
   onRestart,
   onTogglePause,
+  onForceStart,
 }) => {
   const badge = formatCallBadge(phase, score.lastCall, rallyShotCount);
 
@@ -311,7 +313,31 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
 
       {/* Right: Crisp Studio Action Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        {phase === 'demo_pause' ? (
+        {phase === 'ready' && onForceStart ? (
+          <button
+            type="button"
+            className="lab-btn"
+            onClick={onForceStart}
+            title="Start match immediately without waiting for :8000 ready (SPACE)"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: '#141413',
+              color: '#ffffff',
+              border: '1px solid #141413',
+              borderRadius: 6,
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 500,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            <span>Start now</span>
+            <KeyHint label="SPACE" dark />
+          </button>
+        ) : phase === 'demo_pause' ? (
           <button
             type="button"
             className="lab-btn"

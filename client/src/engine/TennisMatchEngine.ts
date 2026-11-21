@@ -145,6 +145,7 @@ export class TennisMatchEngine {
 
   // Rally state
   private hitter: 'human' | 'ai' = 'ai';
+  private pausedFromPhase: MatchPhase | null = null;
   private rallyShotCount = 0;
   private pendingOpponentDecision: OpponentDecisionOutput | null = null;
   private opponentTargetPos: { x: number; z: number } = { x: 0, z: COURT.AI_START_Z };
@@ -256,6 +257,12 @@ export class TennisMatchEngine {
   /** Resumes play after `demo_pause` (swapping in any newly arrived agent strategy first). */
   resumeFromDemoPause() {
     if (this.renderState.phase !== 'demo_pause') return;
+    const resumePhase = this.pausedFromPhase;
+    this.pausedFromPhase = null;
+    if (resumePhase === 'rally' || resumePhase === 'serving') {
+      this.setPhase(resumePhase);
+      return;
+    }
     const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
     if (hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
       this.setPhase('match_over');
@@ -266,8 +273,14 @@ export class TennisMatchEngine {
 
   /** Triggers an on-demand demo pause (e.g. presenter hits `P`). */
   triggerManualDemoPause() {
-    if (this.renderState.phase === 'rally' || this.renderState.phase === 'serving') {
-      this.renderState.replayArcs = this.shotHistory.slice(-8);
+    const p = this.renderState.phase;
+    if (p === 'rally' || p === 'serving' || p === 'point_over') {
+      this.pausedFromPhase = p;
+      const arcs = this.shotHistory.slice(-8);
+      if (this.activeShotRecord && !arcs.includes(this.activeShotRecord)) {
+        arcs.push(this.activeShotRecord);
+      }
+      this.renderState.replayArcs = arcs;
       this.setPhase('demo_pause');
     }
   }
@@ -303,45 +316,61 @@ export class TennisMatchEngine {
   }
 
   /**
-   * Evaluates reach/timing quality for a player swing against the current incoming ball.
-   * Ensures named opponent shot choices (`dropshot`, wide `slice`, fast `flat`, deep `lob`)
-   * produce a genuine ≥25% difficulty differential depending on player stance & weakness.
+   * Evaluates stroke-matchup quality for a stationary player swing against the incoming AI shot.
+   * Since player position is fixed (zero distracting footwork), rally pressure & adaptation revolve
+   * around SHOT TYPE & WING matchups:
+   *  - Ripping heavy `topspin` off a low skidding `slice` (especially on backhand) or dying `dropshot` is low-margin.
+   *  - Answering low `slice` / `dropshot` with `slice` or touch `dropshot` is clean & high-quality.
+   *  - Trying a delicate `dropshot` off a fast penetrating `flat` drive is risky; redirecting `slice`/`topspin` is clean.
+   *  - Ripping `topspin` off neutral `topspin` / `lob` crushes the ball cleanly.
    */
-  assessPlayerContact(wing: StrokeWing, weaknessPenalty = 0): ReturnContactAssessment {
+  assessPlayerContact(
+    wing: StrokeWing,
+    weaknessPenalty = 0,
+    playerShotType: HumanShotType = 'topspin',
+  ): ReturnContactAssessment {
     const b = this.ballEngine.state;
     const p = this.renderState.player;
     const lateralGap = Math.abs(b.x - p.x);
     const depthGap = Math.abs(b.z - p.z);
 
-    // Effective reach window for a stationary webcam player with lateral arm reach + step-in assist.
-    // Neutral rally balls are very returnable so the player starts off winning (~65-70% vs baseline);
-    // targeted counter-shots (dropshot vs deep player, wide slice to weak backhand) create real stretch!
     const oppShot = this.lastOpponentShot?.shotType ?? 'topspin';
-    const maxLateral = oppShot === 'slice' ? 3.2 : oppShot === 'flat' ? 3.45 : 3.95;
-    const maxDepth = oppShot === 'dropshot' ? 3.25 : 4.35;
+    const oppAim = this.lastOpponentShot?.aim ?? 'middle_deep';
 
-    if (lateralGap > maxLateral + 1.55 || depthGap > maxDepth + 1.5) {
-      return { reachable: false, quality: 0, lateralGap, depthGap, forcedErrorProb: 1 };
+    let matchupDelta = 0;
+    if (oppShot === 'slice') {
+      if (playerShotType === 'topspin') {
+        matchupDelta -= wing === 'backhand' || oppAim === 'left_deep' ? 0.28 : 0.16;
+      } else {
+        matchupDelta += 0.08; // counter-slice or touch dropshot handles low skid cleanly
+      }
+    } else if (oppShot === 'dropshot') {
+      if (playerShotType === 'topspin') {
+        matchupDelta -= 0.24; // hard full-windup topspin on a dying short ball clips net/sails long more often
+      } else {
+        matchupDelta += 0.1; // slice scoop or counter-dropshot digs it out cleanly
+      }
+    } else if (oppShot === 'flat') {
+      if (playerShotType === 'dropshot') {
+        matchupDelta -= 0.26; // absorbing heavy flat pace into a dropshot is difficult
+      } else if (playerShotType === 'slice') {
+        matchupDelta += 0.05; // slice block absorbs flat pace well
+      }
+    } else if (oppShot === 'topspin' || oppShot === 'lob') {
+      if (playerShotType === 'topspin') {
+        matchupDelta += 0.06; // rhythm topspin exchange
+      } else if (playerShotType === 'dropshot' && oppShot === 'lob') {
+        matchupDelta -= 0.16;
+      }
     }
 
-    const latStress = clamp(Math.max(0, lateralGap - 0.95) / maxLateral, 0, 1);
-    const depthStress = clamp(Math.max(0, depthGap - 1.15) / maxDepth, 0, 1);
-    const heightStress = oppShot === 'slice' && b.y < 0.32 ? 0.1 : oppShot === 'lob' && b.y > 2.3 ? 0.14 : 0;
-    const wingPenalty = wing === 'backhand' ? 0.03 : 0;
-    // Alert players already inside the court (< 8.2m) handle dropshots cleanly on the rise!
-    const shortCourtBonus = oppShot === 'dropshot' && p.z < 8.2 ? 0.16 : 0;
+    const wingPenalty = wing === 'backhand' && oppAim.startsWith('left_') ? 0.06 : 0;
+    const quality = clamp(0.88 + matchupDelta - wingPenalty - weaknessPenalty, 0.18, 1.0);
 
-    const quality = clamp(
-      1 + shortCourtBonus - 0.25 * latStress - 0.28 * depthStress - heightStress - wingPenalty - weaknessPenalty,
-      0.16,
-      1.0,
-    );
-
-    // Comfortable shots stay in play reliably (~2.5-3.5 player shots per point); counters create real pressure without 100% free points!
     const forcedErrorProb =
-      weaknessPenalty < 0.14 && quality > 0.72
-        ? 0.065
-        : clamp(0.05 + (1 - quality) * 0.56 + weaknessPenalty * 0.68, 0.065, 0.78);
+      weaknessPenalty < 0.14 && quality > 0.74
+        ? 0.045
+        : clamp(0.04 + (1 - quality) * 0.54 + weaknessPenalty * 0.62, 0.045, 0.74);
     return { reachable: true, quality, lateralGap, depthGap, forcedErrorProb };
   }
 
@@ -464,7 +493,11 @@ export class TennisMatchEngine {
       return false;
     }
 
-    const assessment = this.assessPlayerContact(swing.wing, opts?.weaknessPenalty ?? 0);
+    const assessment = this.assessPlayerContact(
+      swing.wing,
+      opts?.weaknessPenalty ?? 0,
+      swing.shotType,
+    );
     if (!assessment.reachable) {
       this.sink.onAgentEvent?.({
         name: 'missed_swing',
@@ -521,13 +554,15 @@ export class TennisMatchEngine {
       targetX = colX + (this.rng() * 2 - 1) * 0.5;
       targetZ = depthZ + (this.rng() * 2 - 1) * 0.45;
     } else {
-      targetX = clamp(swing.angle * 4.4 + (this.rng() * 2 - 1) * 0.35, -4.85, 4.85);
+      // Natural wing + racket angle placement so forehand/backhand & shot_type clearly shape rally geometry
+      const wingBias = swing.wing === 'forehand' ? -1.45 : 1.45;
+      targetX = clamp(wingBias + swing.angle * 3.2 + (this.rng() * 2 - 1) * 0.35, -4.75, 4.75);
       const baseDepth =
         swing.shotType === 'dropshot'
-          ? -(3.8 + swing.power * 1.4)
+          ? -(3.7 + swing.power * 1.2)
           : swing.shotType === 'slice'
             ? -(7.15 + swing.power * 1.05)
-            : -(7.4 + swing.power * 1.9);
+            : -(7.6 + swing.power * 1.7);
       targetZ = clamp(baseDepth, -9.6, -3.5);
     }
 
@@ -854,7 +889,10 @@ export class TennisMatchEngine {
       ? { x: opp.x + 0.25, y: 2.45, z: opp.z + 0.35 }
       : { x: b.x, y: clamp(b.y, 0.65, 1.95), z: clamp(b.z, -11.4, -2.0) };
 
-    // Realistic footwork/stretch error curve controlled by `opponent_speed` (keeps rallies ~2.5-3.5 shots!)
+    // Realistic shot-type & footwork error curve:
+    // - Player `dropshot` beats deep unadapted AI (`opp.z < -7.5`), but gets punished if AI moved in (`middle_short` / `anticipate: move_in`)!
+    // - Player `topspin` beats net-camping AI (`opp.z > -6.0` passing shot) and tests lateral corners!
+    // - Player `slice` stays low and disrupts flat-bashing AI unless AI lifts with topspin/slice!
     const speedMul = this.brain.getSettings().opponent_speed;
     const speedNorm = (speedMul - 0.85) / 0.4; // -0.5 at 0.65, 0 at 0.85, +1.0 at 1.25
     const stretchDist = isServe ? 0 : Math.hypot(b.x - opp.x, b.z - opp.z);
@@ -862,7 +900,21 @@ export class TennisMatchEngine {
     const stretchErr = Math.max(0, stretchDist - 0.75) * clamp(0.19 - speedNorm * 0.12, 0.03, 0.3);
     const paceErr =
       Math.max(0, this.lastHumanShotQuality - 0.8) * clamp(0.22 - speedNorm * 0.16, 0.03, 0.36);
-    const oppErrProb = isServe ? 0 : clamp(baseErr + stretchErr + paceErr, 0.01, 0.58);
+    const shotTypeTacticalErr = isServe
+      ? 0
+      : this.playerLastShotType === 'dropshot' && opp.z < -6.8
+        ? 0.22 // deep unadapted AI struggles when caught back by a dropshot
+        : this.playerLastShotType === 'topspin' && opp.z > -6.0
+          ? 0.24 // net-camping AI gets passed/jammed by heavy topspin drive
+          : this.playerLastShotType === 'slice' && decision.picked.shot_type === 'flat'
+            ? 0.14 // slapping flat at a low-skidding slice hits tape/out more often
+            : 0;
+    const netReadDropshot = !isServe && this.playerLastShotType === 'dropshot' && opp.z > -6.2;
+    const oppErrProb = isServe
+      ? 0
+      : netReadDropshot
+        ? 0.02 // AI stepped in (`middle_short` / `move_in`) and read the dropshot -> clean putaway!
+        : clamp(baseErr + stretchErr + paceErr + shotTypeTacticalErr, 0.01, 0.64);
     const oppForcedErr = !isServe && this.rng() < oppErrProb;
 
     const target = isServe
@@ -875,10 +927,11 @@ export class TennisMatchEngine {
       target.x = (target.x >= 0 ? 1 : -1) * (COURT.PAINTED_HALF_W + 0.9);
     }
 
+    // If AI stepped in and caught a predictable player dropshot at the net, reply with extra putaway bite!
     const sol = solveShotLaunch(contactPos, target, decision.picked.shot_type, {
       actor: 'ai',
       isServe,
-      speedScale: decision.shotSpeedMul,
+      speedScale: netReadDropshot ? decision.shotSpeedMul * 1.12 : decision.shotSpeedMul,
     });
 
     this.ballEngine.launch(
@@ -1016,55 +1069,16 @@ export class TennisMatchEngine {
     this.startNextPoint();
   }
 
-  private updatePlayerMovement(dt: number) {
+  private updatePlayerMovement(_dt: number) {
+    // Player remains stationary at the baseline so all focus stays on physical M5 stroke classification
+    // (`forehand`/`backhand` x `topspin`/`slice`/`dropshot`) and the AI's adaptation to shot habits.
     const p = this.renderState.player;
-    let targetX = this.playerArmX * 3.1;
-    let targetZ = this.playerHomeZ;
-    let maxSpeed = 3.0; // smooth recovery speed back toward preferred homeZ after hitting
-
-    if (this.renderState.phase === 'rally' && this.hitter === 'ai' && this.ballEngine.state.active) {
-      const land = this.renderState.ball.landingMarker;
-      const b = this.ballEngine.state;
-      // Deep-planted baseline grinders react late to disguised short dropshots (after first bounce / mid-court),
-      // whereas alert/all-court players read short balls early and sprint right onto them!
-      const deepGrinderLateRead = this.playerHomeZ >= 11.3 && Boolean(land && land.z < 5.6) && b.z < 2.8;
-      const isShortBall = Boolean(land && land.z < 6.2);
-      maxSpeed =
-        isShortBall && this.playerHomeZ >= 11.3
-          ? 3.15
-          : this.playerHomeZ >= 11.3
-            ? 5.2
-            : 6.7;
-      if (land && !deepGrinderLateRead) {
-        targetX = clamp(this.playerArmX * 2.5 + land.x * 0.45, -4.8, 4.8);
-        if (land.z < 7.5) {
-          targetZ = clamp(land.z + 1.15, 4.8, this.playerHomeZ);
-        } else if (land.z > 9.2 && p.z < 9.0) {
-          targetZ = clamp(land.z + 0.9, 8.8, this.playerHomeZ);
-        } else {
-          targetZ = p.z;
-        }
-      }
-    }
-
-    const dx = targetX - p.x;
-    const dz = targetZ - p.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist > 0.04) {
-      const step = Math.min(dist, maxSpeed * dt);
-      p.vx = (dx / dist) * (step / dt);
-      p.vz = (dz / dist) * (step / dt);
-      p.x += (dx / dist) * step;
-      p.z += (dz / dist) * step;
-      if (this.renderState.phase === 'rally') {
-        p.animState = Math.abs(p.vx) > Math.abs(p.vz) ? (p.vx > 0 ? 'run_right' : 'run_left') : p.vz < 0 ? 'run_forward' : 'run_back';
-      }
-    } else {
-      p.vx = 0;
-      p.vz = 0;
-      if (this.renderState.phase === 'rally') {
-        p.animState = 'idle';
-      }
+    p.x = 0;
+    p.z = COURT.PLAYER_START_Z;
+    p.vx = 0;
+    p.vz = 0;
+    if (this.renderState.phase === 'rally') {
+      p.animState = 'idle';
     }
   }
 

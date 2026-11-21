@@ -316,7 +316,7 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
     match_id: opts.matchId,
     game: 'tennis',
     about:
-      'One human player plays single points against one AI opponent. The player stands near the bottom baseline swinging a physical M5 IMU racket controller while a webcam tracks their dominant arm side (left/center/right, forehand/backhand), and steps inside the court for short balls before recovering toward the baseline. The opponent is at the top half of the screen and picks shot_type, aim, and recovery position on every hit (serves are topspin, flat, or slice — never dropshot or lob). Message timestamps t measure active play time in seconds and pause while waiting for ready, during between-point breaks, and after match_over.',
+      'One human player plays single points against one AI opponent. The player stands stationary at the center baseline swinging a physical M5 IMU racket controller while a webcam tracks their stroke side (forehand/backhand) and swing path. Because player court movement is fixed, focus habit reads and counter-strategies on the player shot_type (topspin, slice, dropshot), side (forehand, backhand), swing_start tells (early_guess, backswing, initial_speed), and shot placement (lands): low slice to backhand disrupts heavy topspin habits, short dropshots/slices disrupt pure topspin grinders, and moving in (middle_short / anticipate move_in) with flat drives punishes dropshot habits. Serves are topspin, flat, or slice. Message timestamps t measure active play time in seconds.',
     mode,
     goal:
       opts.goal ??

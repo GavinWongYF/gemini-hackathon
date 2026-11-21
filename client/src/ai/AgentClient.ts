@@ -80,6 +80,7 @@ export class AgentClient {
   private status: AgentConnectionStatus = 'disconnected';
   private closedByUser = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readyTimer: ReturnType<typeof setTimeout> | null = null;
   private readyReceived = false;
   private outboundQueue: GameToAgentMessage[] = [];
 
@@ -151,17 +152,27 @@ export class AgentClient {
       const finish = (msg: AgentReadyMessage) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (this.readyTimer !== null) {
+          clearTimeout(this.readyTimer);
+          this.readyTimer = null;
+        }
         resolve(msg);
       };
 
-      const timer = setTimeout(() => {
-        if (!this.readyReceived) {
-          this.setStatus('mock');
-          const fallback = this.buildMockReady();
+      if (this.readyTimer !== null) {
+        clearTimeout(this.readyTimer);
+        this.readyTimer = null;
+      }
+
+      this.readyTimer = setTimeout(() => {
+        this.readyTimer = null;
+        if (this.closedByUser || this.readyReceived) return;
+        this.setStatus('mock');
+        const fallback = this.buildMockReady();
+        if (this.setupMsg.mode !== 'practice' || this.forceMock) {
           this.callbacks.onReady?.(fallback);
-          finish(fallback);
         }
+        finish(fallback);
       }, this.readyTimeoutMs);
 
       this.openSocket(
@@ -170,12 +181,13 @@ export class AgentClient {
         },
         () => {
           // Server is unreachable (connection refused) -> switch to offline mock right away
-          if (!this.readyReceived) {
-            this.setStatus('mock');
-            const fallback = this.buildMockReady();
+          if (this.closedByUser || this.readyReceived) return;
+          this.setStatus('mock');
+          const fallback = this.buildMockReady();
+          if (this.setupMsg.mode !== 'practice' || this.forceMock) {
             this.callbacks.onReady?.(fallback);
-            finish(fallback);
           }
+          finish(fallback);
         },
       );
     });
@@ -214,12 +226,27 @@ export class AgentClient {
 
   disconnect() {
     this.closedByUser = true;
+    if (this.readyTimer !== null) {
+      clearTimeout(this.readyTimer);
+      this.readyTimer = null;
+    }
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.ws?.close();
+    const prev = this.ws;
     this.ws = null;
+    if (prev) {
+      prev.onopen = null;
+      prev.onmessage = null;
+      prev.onclose = null;
+      prev.onerror = null;
+      try {
+        prev.close();
+      } catch {
+        // ignore close error
+      }
+    }
     this.setStatus('disconnected');
   }
 
@@ -336,6 +363,7 @@ export class AgentClient {
       this.ws = ws;
 
       ws.onopen = () => {
+        if (this.ws !== ws || this.closedByUser) return;
         opened = true;
         this.setStatus('connected');
         // Per Notion API Design: send `setup` on connect AND on reconnect with same `match_id`
@@ -344,6 +372,7 @@ export class AgentClient {
       };
 
       ws.onmessage = (ev) => {
+        if (this.ws !== ws || this.closedByUser) return;
         if (typeof ev.data !== 'string') return;
         let parsed: AgentToGameMessage;
         try {
@@ -380,7 +409,8 @@ export class AgentClient {
       };
 
       ws.onclose = () => {
-        if (this.closedByUser) return;
+        if (this.ws !== ws || this.closedByUser) return;
+        this.ws = null;
         if (!opened) {
           onInitialConnectFail?.();
         }
@@ -394,6 +424,7 @@ export class AgentClient {
       };
 
       ws.onerror = () => {
+        if (this.ws !== ws) return;
         ws.close();
       };
     } catch {
@@ -452,7 +483,7 @@ export class AgentClient {
       },
       behaviour: {
         ...structuredClone(DEFAULT_TENNIS_BEHAVIOUR),
-        version: 1,
+        version: this.forceMock ? 1 : 0,
       },
     };
   }
