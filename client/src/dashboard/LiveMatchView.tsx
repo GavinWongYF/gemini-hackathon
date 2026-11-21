@@ -358,26 +358,28 @@ export const LiveMatchView: React.FC = () => {
     }
   }, []);
 
+  const isOfflineNotAdapting = agentStatus === 'mock' || agentStatus === 'disconnected';
+
   const agentDot =
     agentStatus === 'connected'
       ? '#059669'
       : agentStatus === 'connecting'
         ? '#d97706'
-        : '#a1a1aa';
+        : '#dc2626';
 
   const agentLabel =
     agentStatus === 'connected'
       ? 'WS :8000'
       : agentStatus === 'connecting'
         ? 'WS :8000'
-        : 'POLICY';
+        : 'OFFLINE';
 
   const agentDetail =
     agentStatus === 'connected'
-      ? 'LIVE'
+      ? 'ADAPTING'
       : agentStatus === 'connecting'
         ? 'SYNC'
-        : 'LOCAL';
+        : 'NOT ADAPTING';
 
   const shortMatchId = matchId ? matchId.replace(/^tennis_/, '').slice(-8) : 'init';
   const cueMeta = CUE_LABELS[visualCue] ?? CUE_LABELS.balanced;
@@ -458,7 +460,40 @@ export const LiveMatchView: React.FC = () => {
             label="POSE"
             detail={webcamActive ? armZone.toUpperCase() : 'IDLE'}
           />
-          <TelemetryPill dotColor={agentDot} label={agentLabel} detail={agentDetail} />
+          {isOfflineNotAdapting ? (
+            <span
+              title="Agent backend at ws://localhost:8000/ws is not connected; opponent is running fixed baseline behaviour without adaptation."
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                height: 24,
+                padding: '0 9px',
+                borderRadius: 5,
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                fontFamily: MONO,
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: '#b91c1c',
+                letterSpacing: '0.02em',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: '#dc2626',
+                  flexShrink: 0,
+                }}
+              />
+              <span>OFFLINE · NOT ADAPTING</span>
+            </span>
+          ) : (
+            <TelemetryPill dotColor={agentDot} label={agentLabel} detail={agentDetail} />
+          )}
 
           <span style={{ width: 1, height: 14, background: '#e5e4df', margin: '0 2px' }} />
 

@@ -14,6 +14,7 @@ import type {
 } from '@shared/contracts';
 import {
   DEFAULT_TENNIS_BEHAVIOUR,
+  TENNIS_SETTINGS_BOUNDS,
   createTennisSetup,
   type AgentErrorMessage,
   type AgentPracticeRunMessage,
@@ -80,6 +81,7 @@ export class AgentClient {
   private closedByUser = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readyReceived = false;
+  private outboundQueue: GameToAgentMessage[] = [];
 
   // Lightweight local stats for offline mock fallback
   private mockShotCount = 0;
@@ -179,22 +181,34 @@ export class AgentClient {
     });
   }
 
+  /** Updates a live setting value on the stored `setup` so any mid-match reconnect reports the active value. */
+  updateActiveSetting(name: string, value: number | string) {
+    const existing = this.setupMsg.settings[name];
+    if (!existing) return;
+    if ('min' in existing && typeof value === 'number') {
+      existing.now = Math.max(existing.min, Math.min(existing.max, value));
+    } else if ('options' in existing && typeof value === 'string') {
+      existing.now = value;
+    }
+  }
+
   /**
    * Starts a brand-new match with a fresh `match_id`, reconnecting and resending `setup`
    * so restarted matches never merge into a previous `match_id` on the agent server.
    */
   startNewMatch(newMatchId?: string): Promise<AgentReadyMessage> {
     this.disconnect();
+    this.outboundQueue = [];
     this.mockShotCount = 0;
     this.mockBackhandCount = 0;
     this.mockForehandCount = 0;
     this.mockDropshotCount = 0;
     this.mockVersion = 1;
-    this.setupMsg = {
-      ...this.setupMsg,
-      match_id:
+    this.setupMsg = createTennisSetup({
+      matchId:
         newMatchId ?? `tennis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-    };
+      mode: this.setupMsg.mode,
+    });
     return this.connectAndSetup();
   }
 
@@ -221,8 +235,14 @@ export class AgentClient {
       return;
     }
 
-    // Offline mock fallback produces live `player_read` after player shots
-    if (this.status === 'mock' && event.by === 'player' && event.name === 'shot') {
+    // Buffer events during transient socket connect/reconnect so early or mid-match events aren't lost
+    if (this.status === 'connecting' || (this.status === 'disconnected' && !this.closedByUser && !this.forceMock)) {
+      this.enqueueOutbound(msg);
+      return;
+    }
+
+    // Only synthesize mock reads when `forceMock` was explicitly requested (never disguise an offline server!)
+    if (this.forceMock && this.status === 'mock' && event.by === 'player' && event.name === 'shot') {
       this.mockShotCount += 1;
       if (event.data.side === 'backhand') this.mockBackhandCount += 1;
       else this.mockForehandCount += 1;
@@ -275,7 +295,12 @@ export class AgentClient {
       return;
     }
 
-    if (this.status === 'mock') {
+    if (this.status === 'connecting' || (this.status === 'disconnected' && !this.closedByUser && !this.forceMock)) {
+      this.enqueueOutbound(msg);
+      return;
+    }
+
+    if (this.forceMock && this.status === 'mock') {
       const update = this.buildMockStrategyUpdate();
       this.callbacks.onStrategyUpdate?.(update);
     }
@@ -315,6 +340,7 @@ export class AgentClient {
         this.setStatus('connected');
         // Per Notion API Design: send `setup` on connect AND on reconnect with same `match_id`
         this.sendJson(this.setupMsg);
+        this.flushOutboundQueue();
       };
 
       ws.onmessage = (ev) => {
@@ -334,6 +360,13 @@ export class AgentClient {
         } else if (parsed.type === 'player_read') {
           this.callbacks.onPlayerRead?.(parsed);
         } else if (parsed.type === 'strategy_update') {
+          if (parsed.settings && typeof parsed.settings.opponent_speed === 'number') {
+            const clamped = Math.max(
+              TENNIS_SETTINGS_BOUNDS.opponent_speed.min,
+              Math.min(TENNIS_SETTINGS_BOUNDS.opponent_speed.max, parsed.settings.opponent_speed),
+            );
+            this.updateActiveSetting('opponent_speed', clamped);
+          }
           this.callbacks.onStrategyUpdate?.(parsed);
         } else if (parsed.type === 'practice_run') {
           this.callbacks.onPracticeRun?.(parsed);
@@ -375,6 +408,21 @@ export class AgentClient {
       this.reconnectTimer = null;
       this.openSocket();
     }, 2500);
+  }
+
+  private enqueueOutbound(msg: GameToAgentMessage) {
+    if (this.outboundQueue.length >= 128) {
+      this.outboundQueue.shift();
+    }
+    this.outboundQueue.push(msg);
+  }
+
+  private flushOutboundQueue() {
+    if (!this.ws || this.ws.readyState !== WS_OPEN || this.outboundQueue.length === 0) return;
+    const pending = this.outboundQueue.splice(0, this.outboundQueue.length);
+    for (const m of pending) {
+      this.sendJson(m);
+    }
   }
 
   private sendJson(msg: GameToAgentMessage): boolean {
