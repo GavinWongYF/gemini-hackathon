@@ -43,7 +43,7 @@ interface IncomingPacket {
 }
 
 interface SerialPortLike {
-  open: (opts: { baudRate: number }) => Promise<void>;
+  open: (opts: { baudRate: number; bufferSize?: number }) => Promise<void>;
   close?: () => Promise<void>;
   readable: ReadableStream<BufferSource> | null;
   writable: WritableStream<Uint8Array> | null;
@@ -58,6 +58,7 @@ interface BleCharacteristicLike extends EventTarget {
 
 interface BleDeviceLike extends EventTarget {
   name?: string;
+  watchAdvertisements?: () => Promise<void>;
   gatt?: {
     connected: boolean;
     connect: () => Promise<{
@@ -81,6 +82,25 @@ interface BleDeviceLike extends EventTarget {
  * Read `getState()` inside `requestAnimationFrame` / 60Hz game loop, and subscribe to `onSwing()`
  * for immediate swing events.
  */
+interface BluetoothLike {
+  requestDevice: (opts: {
+    filters: Array<{ services?: string[]; namePrefix?: string }>;
+    optionalServices?: string[];
+  }) => Promise<BleDeviceLike>;
+  getDevices?: () => Promise<BleDeviceLike[]>;
+}
+
+interface SerialLike extends EventTarget {
+  requestPort: () => Promise<SerialPortLike>;
+  getPorts?: () => Promise<SerialPortLike[]>;
+}
+
+/** Which link carries the racket: the USB cable is the default, Bluetooth is the fallback. */
+export type RacketLinkKind = 'cable' | 'bluetooth' | 'none';
+
+/** Link state shown in the match header. */
+export type BleLinkStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+
 export class HardwareInputManager {
   readonly webcam = new WebcamArmTracker();
   readonly classifier = new ImuSwingClassifier();
@@ -126,10 +146,31 @@ export class HardwareInputManager {
 
   private serialWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private serialActive = false;
+  private serialPort: SerialPortLike | null = null;
+  private serialReader: ReadableStreamDefaultReader<BufferSource> | null = null;
+  private serialOpening = false;
+  /** True once the cable has been open in this page: a dropped port is reopened by itself. */
+  private serialWanted = false;
+  private serialLastError: string | null = null;
+  private serialReopenTimer: number | null = null;
+  /** Set when the cable picker used up the click, so the next click goes straight to Bluetooth. */
+  private bleNextClick = false;
 
   private bleDevice: BleDeviceLike | null = null;
   private bleCmdChar: BleCharacteristicLike | null = null;
   private bleActive = false;
+  /** True from the moment a racket is chosen until `disconnectBle()`: the link is kept up by itself. */
+  private bleWanted = false;
+  private bleLink: BleLinkStatus = 'idle';
+  private bleLastError: string | null = null;
+  private bleOpening = false;
+  private bleOpenToken = 0;
+  private bleReconnectTimer: number | null = null;
+  private bleReconnectAttempt = 0;
+  private bleWatchdogTimer: number | null = null;
+  private bleLastPacketMs = 0;
+  private bleWatchedDevices = new WeakSet<object>();
+  private bleWatchedChars = new WeakSet<object>();
 
   private swingCounter = 0;
   private lastSwingMs = 0;
@@ -163,6 +204,9 @@ export class HardwareInputManager {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const targetUrl = wsUrl ?? `${protocol}//${window.location.host}/ws-hardware`;
     this.connectWebSocket(targetUrl);
+    this.getSerial()?.addEventListener('connect', this.handleSerialPlugged);
+    window.addEventListener('pagehide', this.handlePageHide);
+    void this.bootRacketLink();
   }
 
   stop() {
@@ -184,6 +228,9 @@ export class HardwareInputManager {
     this.pendingImuSwing = null;
     this.ws?.close();
     this.ws = null;
+    this.getSerial()?.removeEventListener('connect', this.handleSerialPlugged);
+    window.removeEventListener('pagehide', this.handlePageHide);
+    void this.disconnectSerial();
     this.disconnectBle();
   }
 
@@ -358,86 +405,282 @@ export class HardwareInputManager {
   /**
    * 1-Click Wireless Connection to M5-TENNIS-IMU via Chrome Web Bluetooth!
    * Streams 13-byte packed binary IMU packets at ~70–100 Hz with <10 ms latency.
+   * Once a racket is chosen the link is kept up: a drop or a stalled stream reconnects by itself.
    */
   async connectBle(): Promise<{ ok: boolean; error?: string }> {
-    const nav = navigator as Navigator & {
-      bluetooth?: {
-        requestDevice: (opts: {
-          filters: Array<{ services?: string[]; namePrefix?: string }>;
-          optionalServices?: string[];
-        }) => Promise<BleDeviceLike>;
-      };
-    };
-
-    if (!nav.bluetooth) {
-      return {
-        ok: false,
-        error: 'Web Bluetooth unavailable — open http://localhost:5173 in Chrome or Edge.',
-      };
+    if (this.serialActive) {
+      return { ok: false, error: 'The cable is connected, so Bluetooth is not used.' };
+    }
+    const bt = this.getBluetooth();
+    if (!bt) {
+      this.bleLink = 'failed';
+      this.bleLastError = 'Web Bluetooth unavailable - open the game in Chrome or Edge.';
+      this.notifyState();
+      return { ok: false, error: this.bleLastError };
     }
 
-    try {
-      this.disconnectBle();
+    if (!this.bleDevice) {
+      this.bleLink = 'connecting';
+      this.bleLastError = null;
+      this.notifyState();
+    }
 
-      const device = await nav.bluetooth.requestDevice({
+    let device: BleDeviceLike;
+    try {
+      // The current link stays up while the chooser is open, so a stray click or a cancelled chooser drops nothing.
+      device = await bt.requestDevice({
         filters: [{ services: [M5_BLE_SERVICE_UUID] }, { namePrefix: 'M5-TENNIS' }],
         optionalServices: [M5_BLE_SERVICE_UUID],
       });
-
-      this.bleDevice = device;
-      device.addEventListener('gattserverdisconnected', () => {
-        this.bleActive = false;
-        this.bleCmdChar = null;
-        this.state.imuConnected = false;
-        this.notifyState();
-      });
-
-      if (!device.gatt) return { ok: false, error: 'Selected BLE device has no GATT server.' };
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(M5_BLE_SERVICE_UUID);
-      const imuChar = await service.getCharacteristic(M5_BLE_IMU_CHAR_UUID);
-      try {
-        this.bleCmdChar = await service.getCharacteristic(M5_BLE_CMD_CHAR_UUID);
-      } catch {
-        this.bleCmdChar = null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!this.bleDevice) {
+        const cancelled = /cancel/i.test(msg);
+        this.bleLink = cancelled ? 'idle' : 'failed';
+        this.bleLastError = cancelled ? null : msg;
       }
-
-      imuChar.addEventListener('characteristicvaluechanged', (ev: Event) => {
-        const target = ev.target as BleCharacteristicLike;
-        const dv = target.value;
-        if (!dv || dv.byteLength < 13) return;
-        const sample: RawImuSample = {
-          ax: dv.getInt16(0, true) / 1000,
-          ay: dv.getInt16(2, true) / 1000,
-          az: dv.getInt16(4, true) / 1000,
-          gx: dv.getInt16(6, true) / 10,
-          gy: dv.getInt16(8, true) / 10,
-          gz: dv.getInt16(10, true) / 10,
-          recenter: (dv.getUint8(12) & 1) === 1,
-        };
-        this.ingestSample(sample, 'm5_ble');
-      });
-
-      await imuChar.startNotifications();
-      this.bleActive = true;
-      this.state.source = 'm5_ble';
-      this.state.imuConnected = true;
-      this.state.deviceInfo = `${device.name ?? 'M5-TENNIS-IMU'} • Wireless BLE`;
       this.notifyState();
+      return { ok: false, error: msg };
+    }
+
+    if (this.bleDevice && this.bleDevice !== device) this.disconnectBle();
+    this.bleDevice = device;
+    this.bleWanted = true;
+    this.clearBleReconnectTimer();
+    this.bleReconnectAttempt = 0;
+    this.watchBleDevice(device);
+    this.startBleWatchdog();
+
+    if (this.bleActive && device.gatt?.connected) {
+      this.bleLink = 'connected';
+      this.notifyState();
+      return { ok: true };
+    }
+
+    this.bleLink = 'connecting';
+    this.notifyState();
+    try {
+      await this.openBleGatt(device);
       return { ok: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (this.bleDevice === device) {
+        this.bleLastError = msg;
+        this.bleLink = 'reconnecting';
+        this.scheduleBleReconnect();
+      }
+      this.notifyState();
       return { ok: false, error: msg };
     }
   }
 
+  /** Wireless link state for the header pill. */
+  getBleLink(): { status: BleLinkStatus; error: string | null } {
+    return { status: this.bleLink, error: this.bleLastError };
+  }
+
   disconnectBle() {
-    if (this.bleDevice?.gatt?.connected) {
-      this.bleDevice.gatt.disconnect();
+    this.bleWanted = false;
+    this.clearBleReconnectTimer();
+    if (this.bleWatchdogTimer !== null) {
+      window.clearInterval(this.bleWatchdogTimer);
+      this.bleWatchdogTimer = null;
     }
+    this.bleOpenToken += 1;
+    this.bleOpening = false;
+    const device = this.bleDevice;
     this.bleDevice = null;
     this.bleCmdChar = null;
     this.bleActive = false;
+    this.bleLink = 'idle';
+    try {
+      device?.gatt?.disconnect();
+    } catch {
+      // ignore: the link is already gone
+    }
+  }
+
+  private getBluetooth(): BluetoothLike | null {
+    if (typeof navigator === 'undefined') return null;
+    return (navigator as Navigator & { bluetooth?: BluetoothLike }).bluetooth ?? null;
+  }
+
+  /** Opens GATT, finds the IMU stream and starts notifications. Throws if any step fails or times out. */
+  private async openBleGatt(device: BleDeviceLike): Promise<void> {
+    const gatt = device.gatt;
+    if (!gatt) throw new Error('Selected BLE device has no GATT server.');
+    const token = ++this.bleOpenToken;
+    this.bleOpening = true;
+    try {
+      const server = await withTimeout(gatt.connect(), 12000, 'Bluetooth connect timed out');
+      const service = await withTimeout(
+        server.getPrimaryService(M5_BLE_SERVICE_UUID),
+        8000,
+        'Racket service not found',
+      );
+      const imuChar = await withTimeout(
+        service.getCharacteristic(M5_BLE_IMU_CHAR_UUID),
+        8000,
+        'Racket IMU stream not found',
+      );
+      let cmdChar: BleCharacteristicLike | null = null;
+      try {
+        cmdChar = await withTimeout(service.getCharacteristic(M5_BLE_CMD_CHAR_UUID), 4000, 'no command channel');
+      } catch {
+        cmdChar = null;
+      }
+
+      if (!this.bleWatchedChars.has(imuChar)) {
+        this.bleWatchedChars.add(imuChar);
+        imuChar.addEventListener('characteristicvaluechanged', (ev: Event) => {
+          if (this.bleDevice !== device) return;
+          const target = ev.target as BleCharacteristicLike;
+          const dv = target.value;
+          if (!dv || dv.byteLength < 13) return;
+          this.bleLastPacketMs = performance.now();
+          const sample: RawImuSample = {
+            ax: dv.getInt16(0, true) / 1000,
+            ay: dv.getInt16(2, true) / 1000,
+            az: dv.getInt16(4, true) / 1000,
+            gx: dv.getInt16(6, true) / 10,
+            gy: dv.getInt16(8, true) / 10,
+            gz: dv.getInt16(10, true) / 10,
+            recenter: (dv.getUint8(12) & 1) === 1,
+          };
+          this.ingestSample(sample, 'm5_ble');
+        });
+      }
+
+      await withTimeout(imuChar.startNotifications(), 8000, 'Racket stream did not start');
+      if (token !== this.bleOpenToken || this.bleDevice !== device) return;
+
+      this.bleCmdChar = cmdChar;
+      this.bleActive = true;
+      this.bleLink = 'connected';
+      this.bleLastError = null;
+      this.bleReconnectAttempt = 0;
+      this.bleLastPacketMs = performance.now();
+      this.state.source = 'm5_ble';
+      this.state.imuConnected = true;
+      this.state.deviceInfo = `${device.name ?? 'M5-TENNIS-IMU'} • Wireless BLE`;
+      this.notifyState();
+    } catch (err) {
+      // A half-open link is closed so the next attempt starts clean.
+      if (token === this.bleOpenToken && this.bleDevice === device) {
+        try {
+          gatt.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+      throw err;
+    } finally {
+      if (token === this.bleOpenToken) this.bleOpening = false;
+    }
+  }
+
+  private watchBleDevice(device: BleDeviceLike) {
+    if (this.bleWatchedDevices.has(device)) return;
+    this.bleWatchedDevices.add(device);
+    device.addEventListener('gattserverdisconnected', () => {
+      if (this.bleDevice !== device) return;
+      this.bleActive = false;
+      this.bleCmdChar = null;
+      this.state.imuConnected = false;
+      if (this.bleWanted) {
+        this.bleLink = 'reconnecting';
+        this.scheduleBleReconnect(300);
+      } else {
+        this.bleLink = 'idle';
+      }
+      this.notifyState();
+    });
+  }
+
+  private clearBleReconnectTimer() {
+    if (this.bleReconnectTimer !== null) {
+      window.clearTimeout(this.bleReconnectTimer);
+      this.bleReconnectTimer = null;
+    }
+  }
+
+  /** Short backoff: 0.4 s, 0.8 s, 1.6 s, then every 3 s until the racket is back. */
+  private scheduleBleReconnect(delayMs?: number) {
+    if (!this.bleWanted || !this.bleDevice || this.bleReconnectTimer !== null) return;
+    const delay = delayMs ?? Math.min(3000, 400 * 2 ** Math.min(this.bleReconnectAttempt, 3));
+    this.bleReconnectTimer = window.setTimeout(() => {
+      this.bleReconnectTimer = null;
+      void this.tryBleReconnect();
+    }, delay);
+  }
+
+  private async tryBleReconnect() {
+    const device = this.bleDevice;
+    if (!device || !this.bleWanted || this.bleActive || this.bleOpening || this.serialActive) return;
+    this.bleReconnectAttempt += 1;
+    this.bleLink = 'reconnecting';
+    this.notifyState();
+    try {
+      await this.openBleGatt(device);
+    } catch (err) {
+      if (this.bleDevice !== device) return;
+      this.bleLastError = err instanceof Error ? err.message : String(err);
+      this.scheduleBleReconnect();
+    }
+  }
+
+  /** Once a second: a link that claims to be up but sends nothing for 4 s is dropped and reopened. */
+  private startBleWatchdog() {
+    if (this.bleWatchdogTimer !== null) return;
+    this.bleWatchdogTimer = window.setInterval(() => {
+      const device = this.bleDevice;
+      if (!device || !this.bleWanted) return;
+      if (this.bleActive && performance.now() - this.bleLastPacketMs > 4000) {
+        this.bleActive = false;
+        this.bleCmdChar = null;
+        this.bleLink = 'reconnecting';
+        this.bleLastError = 'No data from the racket for 4 s';
+        try {
+          device.gatt?.disconnect();
+        } catch {
+          // ignore
+        }
+        this.notifyState();
+        this.scheduleBleReconnect(300);
+      } else if (!this.bleActive && !this.bleOpening && this.bleReconnectTimer === null) {
+        this.scheduleBleReconnect(0);
+      }
+    }, 1000);
+  }
+
+  /**
+   * After a page reload, picks the racket back up with no chooser when the browser still remembers it
+   * (`navigator.bluetooth.getDevices()`, where the browser offers it).
+   */
+  private async restoreBleDevice() {
+    const bt = this.getBluetooth();
+    if (!bt?.getDevices) return;
+    try {
+      const devices = await bt.getDevices();
+      const device =
+        devices.find((d) => (d.name ?? '').startsWith('M5-TENNIS')) ??
+        (devices.length === 1 ? devices[0] : undefined);
+      if (!device || this.bleDevice || !this.started || this.serialActive) return;
+      this.bleDevice = device;
+      this.bleWanted = true;
+      this.watchBleDevice(device);
+      this.startBleWatchdog();
+      try {
+        void device.watchAdvertisements?.().catch(() => undefined);
+      } catch {
+        // ignore: not offered by this browser
+      }
+      this.bleLink = 'reconnecting';
+      this.notifyState();
+      void this.tryBleReconnect();
+    } catch {
+      // ignore: no remembered racket
+    }
   }
 
   private async sendBleCommand(cmd: string) {
@@ -455,21 +698,156 @@ export class HardwareInputManager {
   }
 
   /**
-   * Direct Chrome Web Serial connection to M5 over USB-C (115200 baud).
+   * Pair button: the cable first, Bluetooth only when no cable port is picked.
+   * A port that was allowed before opens with no picker.
+   */
+  async connectRacket(opts?: {
+    bluetooth?: boolean;
+  }): Promise<{ ok: boolean; link: RacketLinkKind; error?: string }> {
+    if (this.serialActive) return { ok: true, link: 'cable' };
+    const serial = this.getSerial();
+    const straightToBluetooth = !!opts?.bluetooth || this.bleNextClick || !serial;
+    this.bleNextClick = false;
+
+    if (!straightToBluetooth && serial) {
+      if (await this.autoConnectSerial()) return { ok: true, link: 'cable' };
+      let port: SerialPortLike | null = null;
+      try {
+        port = await serial.requestPort();
+      } catch {
+        port = null; // picker cancelled or no port there: Bluetooth is next
+      }
+      if (port) {
+        if (await this.openSerialPort(port)) return { ok: true, link: 'cable' };
+        this.notifyState();
+        return { ok: false, link: 'none', error: this.serialLastError ?? 'The cable port did not open.' };
+      }
+      this.serialLastError = null;
+    }
+
+    const res = await this.connectBle();
+    if (!res.ok && /gesture|activation|permission request/i.test(res.error ?? '')) {
+      // The cable picker used up the click. The next click goes straight to Bluetooth.
+      this.bleNextClick = true;
+      this.bleLink = 'failed';
+      this.bleLastError = 'Click once more to pair over Bluetooth.';
+      this.notifyState();
+    }
+    return { ok: res.ok, link: res.ok ? 'bluetooth' : 'none', error: res.error };
+  }
+
+  /** Which link carries the racket right now, for the header. */
+  getRacketLink(): { link: RacketLinkKind; status: BleLinkStatus; error: string | null } {
+    if (this.serialActive) return { link: 'cable', status: 'connected', error: null };
+    if (this.serialOpening) return { link: 'cable', status: 'connecting', error: null };
+    if (this.bleDevice || this.bleLink === 'connecting') {
+      return { link: 'bluetooth', status: this.bleLink, error: this.bleLastError };
+    }
+    if (this.serialWanted) return { link: 'cable', status: 'reconnecting', error: this.serialLastError };
+    if (this.bleLink === 'failed') return { link: 'bluetooth', status: 'failed', error: this.bleLastError };
+    if (this.serialLastError) return { link: 'cable', status: 'failed', error: this.serialLastError };
+    return { link: 'none', status: 'idle', error: null };
+  }
+
+  /**
+   * Chrome Web Serial connection to the M5 over USB-C (115200 baud, compact CSV at 100 Hz).
+   * Opens a port that was allowed before with no picker, and asks for one otherwise.
    */
   async connectSerial(baudRate = 115200): Promise<boolean> {
-    const nav = navigator as Navigator & {
-      serial?: { requestPort: () => Promise<SerialPortLike> };
-    };
-    if (!nav.serial) {
+    if (this.serialActive) return true;
+    const serial = this.getSerial();
+    if (!serial) {
       console.warn('[Hardware] Web Serial API unavailable — use Chrome/Edge.');
       return false;
     }
-
+    if (await this.autoConnectSerial(baudRate)) return true;
     try {
-      const port = await nav.serial.requestPort();
-      await port.open({ baudRate });
+      const port = await serial.requestPort();
+      const ok = await this.openSerialPort(port, baudRate);
+      if (!ok) this.notifyState();
+      return ok;
+    } catch (err) {
+      console.warn('[Hardware] Serial connect cancelled/failed:', err);
+      return false;
+    }
+  }
+
+  /** Lets the cable go and stops reopening it. */
+  async disconnectSerial() {
+    this.serialWanted = false;
+    this.clearSerialReopenTimer();
+    this.serialActive = false;
+    try {
+      await this.serialReader?.cancel();
+    } catch {
+      // ignore: the stream is already closed
+    }
+  }
+
+  private getSerial(): SerialLike | null {
+    if (typeof navigator === 'undefined') return null;
+    return (navigator as Navigator & { serial?: SerialLike }).serial ?? null;
+  }
+
+  private handleSerialPlugged = () => {
+    void this.autoConnectSerial();
+  };
+
+  private handlePageHide = () => {
+    void this.disconnectSerial();
+    this.disconnectBle();
+  };
+
+  /**
+   * On load: the cable first. A reload can find the port still closing, so the first seconds retry.
+   * With no cable there, a racket the browser remembers is picked back up over Bluetooth.
+   */
+  private async bootRacketLink() {
+    for (let attempt = 0; attempt < 4 && this.started && !this.serialActive; attempt++) {
+      if (await this.autoConnectSerial()) return;
+      if (attempt === 0) void this.restoreBleDevice();
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    }
+  }
+
+  /** Opens the first cable port this page is already allowed to use. No picker, no click needed. */
+  private async autoConnectSerial(baudRate = 115200): Promise<boolean> {
+    if (this.serialActive) return true;
+    const serial = this.getSerial();
+    if (!serial?.getPorts) return false;
+    try {
+      const ports = await serial.getPorts();
+      for (const port of ports) {
+        if (await this.openSerialPort(port, baudRate)) return true;
+      }
+    } catch {
+      // ignore: no port allowed yet
+    }
+    return false;
+  }
+
+  private async openSerialPort(port: SerialPortLike, baudRate = 115200): Promise<boolean> {
+    if (this.serialActive) return this.serialPort === port;
+    if (this.serialOpening) return false;
+    this.serialOpening = true;
+    try {
+      try {
+        await port.open({ baudRate, bufferSize: 16384 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/already open/i.test(msg)) throw err;
+        // Left open by an earlier load of this page: close it and open it once more.
+        await port.close?.();
+        await port.open({ baudRate, bufferSize: 16384 });
+      }
+      this.serialPort = port;
       this.serialActive = true;
+      this.serialWanted = true;
+      this.serialLastError = null;
+      this.clearSerialReopenTimer();
+      // One source of swings at a time: the cable wins and Bluetooth is let go.
+      this.disconnectBle();
+      this.bleLastError = null;
       this.state.source = 'm5_serial';
       this.state.imuConnected = true;
 
@@ -479,43 +857,107 @@ export class HardwareInputManager {
       }
 
       this.notifyState();
-
-      if (port.readable) {
-        const decoder = new TextDecoderStream();
-        void port.readable.pipeTo(decoder.writable);
-        const reader = decoder.readable.getReader();
-        let buffer = '';
-
-        const pump = async () => {
-          try {
-            while (this.serialActive) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              buffer += value;
-              let idx = buffer.indexOf('\n');
-              while (idx !== -1) {
-                const line = buffer.slice(0, idx).trim();
-                buffer = buffer.slice(idx + 1);
-                if (line) this.parseIncomingLine(line, 'm5_serial');
-                idx = buffer.indexOf('\n');
-              }
-            }
-          } catch (err) {
-            console.warn('[Hardware] Serial stream closed:', err);
-          } finally {
-            this.serialActive = false;
-            this.serialWriter = null;
-            this.state.imuConnected = false;
-            this.notifyState();
-          }
-        };
-        void pump();
-      }
+      void this.pumpSerial(port);
       return true;
     } catch (err) {
-      console.warn('[Hardware] Serial connect cancelled/failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      this.serialLastError = `The cable port did not open (${msg}). Close other tabs or apps that use it.`;
       return false;
+    } finally {
+      this.serialOpening = false;
     }
+  }
+
+  private async pumpSerial(port: SerialPortLike) {
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let streamErrors = 0;
+    try {
+      while (this.serialActive && this.serialPort === port && port.readable) {
+        const reader = port.readable.getReader();
+        this.serialReader = reader;
+        let ended = false;
+        try {
+          while (this.serialActive && this.serialPort === port) {
+            const { value, done } = await reader.read();
+            if (done) {
+              ended = true;
+              break;
+            }
+            if (!value) continue;
+            streamErrors = 0;
+            buffer += decoder.decode(value, { stream: true });
+            let idx = buffer.indexOf('\n');
+            while (idx !== -1) {
+              const line = buffer.slice(0, idx).trim();
+              buffer = buffer.slice(idx + 1);
+              if (line) this.parseIncomingLine(line, 'm5_serial');
+              idx = buffer.indexOf('\n');
+            }
+            if (buffer.length > 4096) buffer = '';
+          }
+        } catch (err) {
+          // A framing or overrun error ends this stream only. The port hands out a fresh one, so the loop carries on.
+          streamErrors += 1;
+          console.warn('[Hardware] Serial stream error:', err);
+        } finally {
+          try {
+            reader.releaseLock();
+          } catch {
+            // ignore
+          }
+          if (this.serialReader === reader) this.serialReader = null;
+        }
+        if (ended || streamErrors > 20) break;
+        if (streamErrors > 0) await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+    } finally {
+      await this.releaseSerialPort(port);
+    }
+  }
+
+  private async releaseSerialPort(port: SerialPortLike) {
+    const writer = this.serialWriter;
+    this.serialWriter = null;
+    try {
+      writer?.releaseLock();
+    } catch {
+      // ignore
+    }
+    try {
+      await port.close?.();
+    } catch {
+      // ignore: an unplugged port is already closed
+    }
+    if (this.serialPort === port) this.serialPort = null;
+    this.serialActive = false;
+    this.state.imuConnected = false;
+    if (this.serialWanted) {
+      this.serialLastError = 'The cable dropped. It reopens by itself when it is back.';
+      this.scheduleSerialReopen();
+    }
+    this.notifyState();
+  }
+
+  private clearSerialReopenTimer() {
+    if (this.serialReopenTimer !== null) {
+      window.clearTimeout(this.serialReopenTimer);
+      this.serialReopenTimer = null;
+    }
+  }
+
+  private scheduleSerialReopen() {
+    if (!this.serialWanted || this.serialActive || this.serialReopenTimer !== null) return;
+    this.serialReopenTimer = window.setTimeout(() => {
+      this.serialReopenTimer = null;
+      if (!this.serialWanted || this.serialActive) return;
+      void this.autoConnectSerial().then((ok) => {
+        if (!ok) {
+          this.serialLastError = 'The cable dropped. It reopens by itself when it is back.';
+          this.scheduleSerialReopen();
+        }
+      });
+    }, 1500);
   }
 
   async sendSerialCommand(command: string): Promise<boolean> {
@@ -629,7 +1071,8 @@ export class HardwareInputManager {
   }
 
   private ingestSample(sample: RawImuSample, source: 'm5_ble' | 'm5_serial' | 'm5_ws') {
-    // Prefer wireless BLE if both BLE and Serial happen to be open simultaneously
+    // One source of swings at a time: the cable wins, then Bluetooth, then the relay.
+    if (this.serialActive && source !== 'm5_serial') return;
     if (this.bleActive && source !== 'm5_ble') return;
 
     const now = performance.now();
@@ -1021,7 +1464,7 @@ export class HardwareInputManager {
     if (e.code === 'Digit1') this.setShotType('topspin');
     else if (e.code === 'Digit2') this.setShotType('slice');
     else if (e.code === 'Digit3') this.setShotType('dropshot');
-    else if (e.code === 'KeyR') this.recenter();
+    else if (e.code === 'KeyR' && !e.repeat && !e.shiftKey && !e.metaKey && !e.ctrlKey) this.recenter();
     else if (e.code === 'Space') {
       e.preventDefault();
       this.triggerManualSwing();
@@ -1041,4 +1484,23 @@ export class HardwareInputManager {
   };
 }
 
-export const hardwareInput = new HardwareInputManager();
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+// One manager per page, kept across hot reloads of this file so a code update never drops the racket link.
+const hardwareHolder = globalThis as { __tennisHardwareInput?: HardwareInputManager };
+export const hardwareInput: HardwareInputManager =
+  hardwareHolder.__tennisHardwareInput ?? (hardwareHolder.__tennisHardwareInput = new HardwareInputManager());

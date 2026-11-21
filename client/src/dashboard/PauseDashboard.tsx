@@ -109,8 +109,8 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
       }}
     >
       {/* Left: Tabular Broadcast Scoreboard */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <span
             style={{
               width: 7,
@@ -466,8 +466,6 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
                 <path d="M2.2 4.5A4.2 4.2 0 1 1 2.5 8.3" />
                 <polyline points="2,1.8 2,4.7 4.9,4.7" />
               </svg>
-              <span>Restart</span>
-              <KeyHint label="⇧R" />
             </button>
           </>
         ) : phase === 'match_over' ? (

@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ArmZone, MatchRenderState, RecordedShot, StrategyVisualCue, StrokeWing } from '@shared/contracts';
 import { TENNIS_MATCH_PLAN, TENNIS_SETTINGS_BOUNDS } from '@shared/agentProtocol';
-import { hardwareInput } from '../hardware/HardwareInputManager';
+import { hardwareInput, type BleLinkStatus, type RacketLinkKind } from '../hardware/HardwareInputManager';
 import { AgentClient, type AgentConnectionStatus } from '../ai/AgentClient';
 import { OpponentBrain } from '../ai/OpponentBrain';
 import { TennisMatchEngine, createInitialMatchRenderState } from '../engine/TennisMatchEngine';
@@ -143,6 +143,10 @@ export const LiveMatchView: React.FC = () => {
   const [visualCue, setVisualCue] = useState<StrategyVisualCue>('balanced');
 
   const [recentShots, setRecentShots] = useState<RecordedShot[]>([]);
+  // The latest shots are read through a ref so `buildColoredPauseArcs` keeps one identity.
+  // With `recentShots` in its deps, every recorded shot re-ran the match effect and restarted the match.
+  const recentShotsRef = useRef<RecordedShot[]>([]);
+  recentShotsRef.current = recentShots;
   const [pauseColoredArcs, setPauseColoredArcs] = useState<RecordedShot[]>([]);
   const [pointWinners, setPointWinners] = useState<PointWinnerRecord[]>([]);
   const [rallyShotCount, setRallyShotCount] = useState<number>(0);
@@ -150,6 +154,9 @@ export const LiveMatchView: React.FC = () => {
   const [imuConnected, setImuConnected] = useState(false);
   const [imuHz, setImuHz] = useState(0);
   const [imuCalibrated, setImuCalibrated] = useState(false);
+  const [imuLink, setImuLink] = useState<BleLinkStatus>('idle');
+  const [imuLinkError, setImuLinkError] = useState<string | null>(null);
+  const [imuLinkKind, setImuLinkKind] = useState<RacketLinkKind | 'relay'>('none');
   const [webcamActive, setWebcamActive] = useState(false);
   const [webcamStatus, setWebcamStatus] = useState<'idle' | 'loading' | 'running' | 'error'>('idle');
   const [armZone, setArmZone] = useState<ArmZone>('center');
@@ -185,7 +192,7 @@ export const LiveMatchView: React.FC = () => {
     // Section 19.3: Player shots since previous pause colored GREEN (point won) vs RED (point lost)
     // Uses Akhil's untouched TennisBallAndTrajectories SHOT_ARC_COLORS (`dropshot`=#22c55e, `volley`=#f43f5e)
     const entries = shotsSincePauseRef.current;
-    if (entries.length === 0) return recentShots;
+    if (entries.length === 0) return recentShotsRef.current;
     return entries.map(({ shot, round }) => {
       const winner = roundWinnersRef.current.get(round);
       const wonPoint = winner === 'player' || (winner === undefined && shot.outcome !== 'net' && shot.outcome !== 'out');
@@ -195,7 +202,7 @@ export const LiveMatchView: React.FC = () => {
         shotType: wonPoint ? 'dropshot' : 'volley',
       };
     });
-  }, [recentShots]);
+  }, []);
 
   const handleRestart = useCallback(() => {
     const engine = engineRef.current;
@@ -510,6 +517,10 @@ export const LiveMatchView: React.FC = () => {
         setImuConnected(hw.imuConnected);
         setImuHz(hw.imuHz);
         setImuCalibrated(hw.calibration === 'ready');
+        const link = hardwareInput.getRacketLink();
+        setImuLink(link.status);
+        setImuLinkError(link.error);
+        setImuLinkKind(link.link === 'none' && hw.imuConnected && hw.source === 'm5_ws' ? 'relay' : link.link);
         setWebcamActive(hw.arm.active);
         setArmZone(hw.arm.armZone);
         setArmWing(hw.arm.wing);
@@ -615,8 +626,9 @@ export const LiveMatchView: React.FC = () => {
     hardwareInput.zeroRacket();
   }, []);
 
-  const handleConnectBle = useCallback(() => {
-    void hardwareInput.connectBle();
+  const handleConnectBle = useCallback((e: React.MouseEvent) => {
+    // The cable first. Shift+click goes straight to Bluetooth.
+    void hardwareInput.connectRacket({ bluetooth: e.shiftKey });
   }, []);
 
   const handleForceStart = useCallback(() => {
@@ -738,8 +750,16 @@ export const LiveMatchView: React.FC = () => {
             onClick={handleConnectBle}
             title={
               imuConnected
-                ? 'M5 IMU live — click to switch Web Bluetooth device'
-                : 'Click to pair M5-TENNIS-IMU over Web Bluetooth (or run ble_bridge.py)'
+                ? imuLinkKind === 'cable'
+                  ? 'Racket live over the USB cable.'
+                  : 'Racket live. Click to pair again: the cable first, Shift+click for Bluetooth.'
+                : imuLinkKind === 'cable' && imuLink === 'connected'
+                  ? 'The cable port is open but no readings are arriving. Check the racket is switched on.'
+                  : imuLink === 'reconnecting' || imuLink === 'connecting'
+                    ? `Looking for the racket, it reconnects by itself${imuLinkError ? ` (${imuLinkError})` : ''}. Click to pick it again.`
+                    : imuLink === 'failed'
+                      ? `Could not connect${imuLinkError ? `: ${imuLinkError}` : ''} Click to try again.`
+                      : 'Click to pair the racket: the USB cable first, Bluetooth if no cable port is picked. Shift+click goes straight to Bluetooth.'
             }
             style={{
               display: 'inline-flex',
@@ -764,12 +784,42 @@ export const LiveMatchView: React.FC = () => {
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: imuConnected ? (imuCalibrated ? '#059669' : '#d97706') : '#c8c7c0',
+                background: imuConnected
+                  ? imuCalibrated
+                    ? '#059669'
+                    : '#d97706'
+                  : imuLink === 'connecting' || imuLink === 'reconnecting'
+                    ? '#d97706'
+                    : imuLink === 'failed'
+                      ? '#dc2626'
+                      : '#c8c7c0',
                 flexShrink: 0,
               }}
             />
-            <span>IMU</span>
-            <span style={{ color: '#8c8b85' }}>{imuConnected ? `${imuHz}HZ` : 'PAIR'}</span>
+            <span>
+              {imuLinkKind === 'cable'
+                ? 'CABLE'
+                : imuLinkKind === 'bluetooth'
+                  ? 'BLUETOOTH'
+                  : imuLinkKind === 'relay'
+                    ? 'RELAY'
+                    : 'RACKET'}
+            </span>
+            <span style={{ color: '#8c8b85' }}>
+              {imuConnected
+                ? `${imuHz}HZ`
+                : imuLinkKind === 'cable' && imuLink === 'connected'
+                  ? 'NO DATA'
+                  : imuLink === 'failed' && (imuLinkError ?? '').startsWith('Click once more')
+                    ? 'CLICK AGAIN'
+                    : imuLink === 'connecting'
+                  ? 'CONNECTING'
+                  : imuLink === 'reconnecting'
+                    ? 'RECONNECTING'
+                    : imuLink === 'failed'
+                      ? 'RETRY'
+                      : 'PAIR'}
+            </span>
           </button>
           {imuConnected && (
             <button
