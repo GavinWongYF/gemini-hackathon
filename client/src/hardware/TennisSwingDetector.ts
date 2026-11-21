@@ -38,6 +38,8 @@ export interface DetectedWebcamSwing {
   wingSource: 'contact' | 'preparation' | 'travel' | 'palm' | 'ball' | 'default';
   shotType: HumanShotType;
   spinSource: 'motion' | 'pronation' | 'palmUp' | 'softTouch';
+  /** True when camera spin cues were ambiguous and fell back to default topspin */
+  spinAmbiguous?: boolean;
   pathAngleDeg: number;
   power: number; // 0.18..1.0
   rotation: number; // -1..1
@@ -343,7 +345,9 @@ export function classifyStrokeSide(input: StrokeSideKinematics): StrokeSideResul
 
   const votes = [
     { key: 'contact' as const, value: signals.contact, weight: 0.55, gate: 0.08 },
-    { key: 'ball' as const, value: signals.ball, weight: committedHand ? 0 : 1.60, gate: 0.15 },
+    // Keep ball lateral offset as a gentle tie-breaker (0.20) so virtual ball side NEVER
+    // overrides a player's actual physical Forehand or Backhand stroke!
+    { key: 'ball' as const, value: signals.ball, weight: committedHand ? 0 : 0.20, gate: 0.15 },
     { key: 'preparation' as const, value: signals.preparation, weight: 0.25, gate: 0.10 },
     { key: 'travel' as const, value: signals.travel, weight: 0.20, gate: 0.08 },
     { key: 'palm' as const, value: signals.palm, weight: 0.10, gate: 0.45 },
@@ -1111,7 +1115,11 @@ export class TennisSwingDetector {
     }
     if (referenceShoulderWidth < 0.035) return null;
 
-    const preAndContact = windowSamples.filter((s) => s.time <= contactFrame.time);
+    // Provide full 520 ms pre-contact history from `allSamples` so `measureContactSpin` (400 ms)
+    // and `highToLevelSlice` (500 ms) never get truncated by the tighter 220 ms `windowSamples`!
+    const preAndContact = allSamples.filter(
+      (s) => s.time <= contactFrame.time && s.time >= contactFrame.time - 520,
+    );
     const travel = measureContactTravel(preAndContact, contactFrame.time);
     const spinMotion = measureContactSpin(preAndContact, contactFrame.time);
     const isHighToLevel = highToLevelSlice(preAndContact, contactFrame.time);
@@ -1177,6 +1185,7 @@ export class TennisSwingDetector {
     const contactPronation = contactFrame.pronationDeg;
     let pathAngle: number;
     let spinSource: 'motion' | 'pronation' | 'palmUp' | 'softTouch' = 'motion';
+    let spinAmbiguous = false;
     const angleMag = Math.min(20, yRange * 80 * motionSpin.verticality);
 
     if (motionSpin.family === 'slice') {
@@ -1196,6 +1205,7 @@ export class TennisSwingDetector {
       spinSource = 'palmUp';
     } else {
       pathAngle = Math.max(8, angleMag * 0.6);
+      spinAmbiguous = true;
     }
 
     let shotType: HumanShotType;
@@ -1258,6 +1268,7 @@ export class TennisSwingDetector {
       wingSource: sideResult.source,
       shotType,
       spinSource,
+      spinAmbiguous,
       pathAngleDeg: pathAngle,
       power,
       rotation,
@@ -1592,6 +1603,7 @@ export class TennisSwingDetector {
 
     let pathAngle: number;
     let spinSource: 'pronation' | 'motion' | 'palmUp' | 'softTouch' = 'motion';
+    let spinAmbiguous = false;
     const angleMag = Math.min(20, yRange * 80 * verticality);
     if (motionSpin.family === 'slice') {
       pathAngle = motionSpin.pathAngle as number;
@@ -1622,6 +1634,7 @@ export class TennisSwingDetector {
     } else {
       pathAngle = Math.max(8, angleMag * 0.6);
       spinSource = 'motion';
+      spinAmbiguous = true;
     }
 
     // Wrist flexion blend at contact (non-slice shots only)
@@ -1792,6 +1805,7 @@ export class TennisSwingDetector {
       wingSource: sideResult.source,
       shotType,
       spinSource,
+      spinAmbiguous,
       pathAngleDeg: pathAngle,
       power,
       rotation,

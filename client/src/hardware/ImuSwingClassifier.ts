@@ -647,8 +647,79 @@ export class ImuSwingClassifier {
       return null;
     }
 
-    // Step B: Locked until player presses ZERO
+    // Step B: Auto-zero cleanly on first 0.25s of stillness (so opening `/match` never
+    // leaves the M5 paralyzed in `needs_zero`!) while keeping manual `ZERO M5` / `RE-ZERO` anytime.
     if (this.phase === 'needs_zero') {
+      this.rawWindow.push({
+        t: nowMs,
+        ax: sample.ax,
+        ay: sample.ay,
+        az: sample.az,
+        gx: sample.gx,
+        gy: sample.gy,
+        gz: sample.gz,
+      });
+      while (
+        this.rawWindow.length > 20 ||
+        (this.rawWindow.length > 2 && nowMs - this.rawWindow[0].t > 240)
+      ) {
+        this.rawWindow.shift();
+      }
+
+      if (this.rawWindow.length >= 6) {
+        let minAx = Infinity, maxAx = -Infinity;
+        let minAy = Infinity, maxAy = -Infinity;
+        let minAz = Infinity, maxAz = -Infinity;
+        let minGx = Infinity, maxGx = -Infinity;
+        let minGy = Infinity, maxGy = -Infinity;
+        let minGz = Infinity, maxGz = -Infinity;
+        let sAx = 0, sAy = 0, sAz = 0, sGx = 0, sGy = 0, sGz = 0;
+        for (const p of this.rawWindow) {
+          if (p.ax < minAx) minAx = p.ax;
+          if (p.ax > maxAx) maxAx = p.ax;
+          if (p.ay < minAy) minAy = p.ay;
+          if (p.ay > maxAy) maxAy = p.ay;
+          if (p.az < minAz) minAz = p.az;
+          if (p.az > maxAz) maxAz = p.az;
+          if (p.gx < minGx) minGx = p.gx;
+          if (p.gx > maxGx) maxGx = p.gx;
+          if (p.gy < minGy) minGy = p.gy;
+          if (p.gy > maxGy) maxGy = p.gy;
+          if (p.gz < minGz) minGz = p.gz;
+          if (p.gz > maxGz) maxGz = p.gz;
+          sAx += p.ax; sAy += p.ay; sAz += p.az;
+          sGx += p.gx; sGy += p.gy; sGz += p.gz;
+        }
+        const rawAccRange = Math.hypot(maxAx - minAx, maxAy - minAy, maxAz - minAz);
+        const rawGyroRange = Math.hypot(maxGx - minGx, maxGy - minGy, maxGz - minGz);
+        if (rawAccRange < 0.09 && rawGyroRange < 14) {
+          if (this.rawStillSinceMs === null) this.rawStillSinceMs = nowMs;
+          if (nowMs - this.rawStillSinceMs >= 220) {
+            const n = this.rawWindow.length;
+            this.ahrs.alignToZero(sAx / n, sAy / n, sAz / n);
+            this.localAccelMag = this.ahrs.getRestAccelMag();
+            this.gyroBiasX = sGx / n;
+            this.gyroBiasY = sGy / n;
+            this.gyroBiasZ = sGz / n;
+            this.vLiveX = 0;
+            this.vLiveY = 0;
+            this.vLiveZ = 0;
+            this.aBiasX = 0;
+            this.aBiasY = 0;
+            this.aBiasZ = 0;
+            this.relYawDeg = 0;
+            this.ring = [];
+            this.angleFilter.reset(0);
+            this.rotFilter.reset(0);
+            this.phase = 'ready';
+            this.state = 'idle';
+            return null;
+          }
+        } else {
+          this.rawStillSinceMs = null;
+        }
+      }
+
       const restMag = this.ahrs.getRestAccelMag();
       const mag = Math.hypot(sample.ax, sample.ay, sample.az);
       this.latestReading = {
