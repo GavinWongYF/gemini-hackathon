@@ -448,7 +448,7 @@ export function TennisAvatar({ role, matchStateRef }: TennisAvatarProps) {
       serveWindupActiveRef.current = true;
       activeOneShotRef.current = 'serve';
       splitStepElapsedRef.current = 0;
-      playClip('serve', 0.08, true, 1.4, 1.15);
+      playClip('serve', 0.12, true, 1.0, Math.max(0, CLIP_CONTACT_TABLE.serve.contact - 1.6));
     } else if (hasNewSwingTrigger && preSwingRef.current && preSwingRef.current.forId === swingId && phase !== 'serving') {
       // The engine's shot for a stroke already under way: keep it, correct the wing if needed, finish through contact.
       lastSwingIdRef.current = swingId;

@@ -240,6 +240,8 @@ export interface MatchRenderState {
     pointIndex: number;
     totalDemoPoints: number;
     lastCall: string;
+    /** Real tennis scoring, one set (Sportacle): games [player, ai], the game call ("30-15", "DEUCE", "AD PLAYER"). */
+    tennis?: { games: [number, number]; call: string; setWinner: 'player' | 'opponent' | null };
   };
   replayArcs: RecordedShot[];
 }

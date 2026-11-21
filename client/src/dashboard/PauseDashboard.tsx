@@ -143,7 +143,7 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               color: '#141413',
             }}
           >
-            {score.humanPoints}
+            {score.tennis ? score.tennis.games[0] : score.humanPoints}
           </span>
 
           <span style={{ fontFamily: MONO, fontSize: 12, color: '#a1a1aa' }}>:</span>
@@ -165,8 +165,13 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               color: '#141413',
             }}
           >
-            {score.aiPoints}
+            {score.tennis ? score.tennis.games[1] : score.aiPoints}
           </span>
+          {score.tennis && (
+            <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: '#141413', padding: '2px 8px', borderRadius: 5, background: '#eef2ff', border: '1px solid #c7d2fe', whiteSpace: 'nowrap' }}>
+              {score.tennis.call}
+            </span>
+          )}
           <span
             style={{
               fontSize: 12,

@@ -120,12 +120,35 @@ export function createInitialMatchRenderState(totalDemoPoints = 0): MatchRenderS
     score: {
       humanPoints: 0,
       aiPoints: 0,
+      tennis: { games: [0, 0], call: '0-0', setWinner: null },
       pointIndex: 1,
       totalDemoPoints,
       lastCall: 'READY',
     },
     replayArcs: [],
   };
+}
+
+/* Sportacle tennis feel (realtennis): 3 s between points, a full serve with a toss, players on the baseline, and
+ * footwork that speeds up and slows down. Ball physics and shot speeds are unchanged. */
+const SERVE_WINDUP_SEC = 1.6;
+const TOSS_START = 0.28;
+const TOSS_APEX = 3.15;
+const SHORT_BALL_Z = 4.2;
+const PLAYER_TOP_SPEED = 6.0;
+const PLAYER_ACCEL = 16;
+const OPPONENT_TOP_SPEED = 5.6;
+const OPPONENT_ACCEL = 12;
+/** Moves an athlete toward (dx, dz) with limited acceleration and a braking approach so it never overshoots. */
+function accelerateToward(a: { x: number; z: number; vx: number; vz: number }, dx: number, dz: number, dist: number, top: number, accel: number, dt: number) {
+  const want = Math.min(top, Math.sqrt(2 * accel * Math.max(0, dist - 0.05)));
+  const tvx = (dx / dist) * want, tvz = (dz / dist) * want;
+  const ddx = tvx - a.vx, ddz = tvz - a.vz, dv = Math.hypot(ddx, ddz), lim = accel * dt;
+  const k = dv > lim ? lim / dv : 1;
+  a.vx += ddx * k; a.vz += ddz * k;
+  const stepX = a.vx * dt, stepZ = a.vz * dt;
+  if (Math.hypot(stepX, stepZ) >= dist) { a.x += dx; a.z += dz; a.vx = 0; a.vz = 0; return; }
+  a.x += stepX; a.z += stepZ;
 }
 
 export class TennisMatchEngine {
@@ -187,13 +210,14 @@ export class TennisMatchEngine {
     this.opts = {
       totalDemoPoints: options.totalDemoPoints ?? 0,
       breakEvery: options.breakEvery ?? 0,
-      pointOverPauseSec: options.pointOverPauseSec ?? 1.4,
-      serveWindupSec: options.serveWindupSec ?? 0.65,
+      pointOverPauseSec: options.pointOverPauseSec ?? 3.0,
+      serveWindupSec: options.serveWindupSec ?? SERVE_WINDUP_SEC,
       enableDemoPauses: options.enableDemoPauses ?? false,
     };
     this.rng = options.rng ?? Math.random;
     this.sink = options.sink ?? {};
     this.renderState = createInitialMatchRenderState(this.opts.totalDemoPoints);
+    this.gamePoints = [0, 0];
   }
 
   getRenderState(): MatchRenderState {
@@ -240,6 +264,7 @@ export class TennisMatchEngine {
     this.pendingOpponentDecision = null;
     this.lastOpponentShot = null;
     this.renderState = createInitialMatchRenderState(this.opts.totalDemoPoints);
+    this.gamePoints = [0, 0];
     this.renderState.score.lastCall = 'WAITING FOR READY';
     this.sink.onPhaseChange?.('ready');
   }
@@ -251,6 +276,7 @@ export class TennisMatchEngine {
     this.shotHistory = [];
     this.shotSeq = 0;
     this.renderState = createInitialMatchRenderState(this.opts.totalDemoPoints);
+    this.gamePoints = [0, 0];
     this.startNextPoint();
   }
 
@@ -264,7 +290,7 @@ export class TennisMatchEngine {
       return;
     }
     const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
-    if (hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
+    if ((hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) || (this.opts.pointOverPauseSec > 0 && this.renderState.score.tennis?.setWinner)) {
       this.setPhase('match_over');
       return;
     }
@@ -699,6 +725,13 @@ export class TennisMatchEngine {
     this.updateOpponentMovement(dt);
 
     if (phase === 'serving') {
+      // The ball toss (Sportacle serve): held at the hand, tossed up, falling to the contact point as the serve lands.
+      if (this.opts.serveWindupSec > 0.5) {
+        const opp = this.renderState.opponent, t = this.phaseTimerSec / this.opts.serveWindupSec;
+        const u = clamp((t - TOSS_START) / (1 - TOSS_START), 0, 1);
+        const y = u <= 0 ? 1.45 : 1.45 + (TOSS_APEX - 1.45) * Math.sin(Math.min(1, u / 0.72) * Math.PI / 2) - (u > 0.72 ? ((u - 0.72) / 0.28) ** 2 * (TOSS_APEX - 2.45) : 0);
+        this.ballEngine.reset({ x: opp.x + 0.25, y, z: opp.z + 0.35 });
+      }
       if (this.phaseTimerSec >= this.opts.serveWindupSec) {
         this.launchOpponentServe();
       }
@@ -1013,6 +1046,8 @@ export class TennisMatchEngine {
       this.renderState.player.animState = 'idle';
     }
 
+    this.scoreTennisPoint(winner);
+
     const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
     const willBreak =
       this.opts.enableDemoPauses &&
@@ -1047,6 +1082,27 @@ export class TennisMatchEngine {
     }
   }
 
+  /** One set of real tennis (as Sportacle tennis): 15-30-40, deuce and advantage, first to 6 games by 2, tie-break at 6-6. */
+  private gamePoints: [number, number] = [0, 0];
+  private scoreTennisPoint(winner: 'player' | 'opponent') {
+    const t = (this.renderState.score.tennis ??= { games: [0, 0], call: '0-0', setWinner: null });
+    if (t.setWinner) return;
+    const w = winner === 'player' ? 0 : 1, l = 1 - w;
+    const tiebreak = t.games[0] === 6 && t.games[1] === 6;
+    this.gamePoints[w] += 1;
+    const [a, b] = this.gamePoints, need = tiebreak ? 7 : 4;
+    if (this.gamePoints[w] >= need && this.gamePoints[w] - this.gamePoints[l] >= 2) {
+      t.games[w] += 1; this.gamePoints = [0, 0];
+      const g = t.games;
+      if ((g[w] >= 6 && g[w] - g[l] >= 2) || g[w] === 7) { t.setWinner = winner; t.call = `SET ${winner === 'player' ? 'PLAYER' : 'GEMINI'} ${g[0]}-${g[1]}`; }
+      else t.call = `GAME ${winner === 'player' ? 'PLAYER' : 'GEMINI'} · ${g[0]}-${g[1]}`;
+      return;
+    }
+    if (tiebreak) { t.call = `TIE-BREAK ${a}-${b}`; return; }
+    const names = ['0', '15', '30', '40'];
+    t.call = a >= 3 && b >= 3 ? (a === b ? 'DEUCE' : `AD ${a > b ? 'PLAYER' : 'GEMINI'}`) : `${names[a]}-${names[b]}`;
+  }
+
   private advanceAfterPointOver() {
     const finishedRound = this.renderState.score.pointIndex - 1;
     const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
@@ -1061,7 +1117,7 @@ export class TennisMatchEngine {
       return;
     }
 
-    if (hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
+    if ((hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) || (this.opts.pointOverPauseSec > 0 && this.renderState.score.tennis?.setWinner)) {
       this.setPhase('match_over');
       return;
     }
@@ -1086,8 +1142,8 @@ export class TennisMatchEngine {
       maxSpeed = 7.6; // brisk Wii-Sports auto-positioning so avatar arrives & plants early
 
       // Choose strike depth: step inside court for short dropshots/angles, stay at baseline for deep drives
-      if (land && land.z < 7.0) {
-        targetZ = clamp(land.z + 1.35, 5.4, COURT.PLAYER_START_Z);
+      if (land && (b.shotType === 'dropshot' || land.z < SHORT_BALL_Z)) {
+        targetZ = clamp(land.z + 1.6, 5.4, COURT.PLAYER_START_Z);
       } else {
         targetZ = COURT.PLAYER_START_Z;
       }
@@ -1108,11 +1164,7 @@ export class TennisMatchEngine {
 
     // Clean 10cm settle deadband so once planted, the avatar holds rock-steady `idle` ready stance
     if (dist > 0.1) {
-      const step = Math.min(dist, maxSpeed * dt);
-      p.vx = (dx / dist) * (step / dt);
-      p.vz = (dz / dist) * (step / dt);
-      p.x += (dx / dist) * step;
-      p.z += (dz / dist) * step;
+      accelerateToward(p, dx, dz, dist, Math.min(maxSpeed, PLAYER_TOP_SPEED), PLAYER_ACCEL, dt);
       if (this.renderState.phase === 'rally') {
         p.animState =
           Math.abs(p.vx) > Math.abs(p.vz)
@@ -1143,11 +1195,7 @@ export class TennisMatchEngine {
     const dist = Math.hypot(dx, dz);
 
     if (dist > 0.05) {
-      const step = Math.min(dist, maxSpeed * dt);
-      opp.vx = (dx / dist) * (step / dt);
-      opp.vz = (dz / dist) * (step / dt);
-      opp.x += (dx / dist) * step;
-      opp.z += (dz / dist) * step;
+      accelerateToward(opp, dx, dz, dist, Math.min(maxSpeed, OPPONENT_TOP_SPEED), OPPONENT_ACCEL, dt);
       if (this.renderState.phase === 'rally') {
         opp.animState =
           Math.abs(opp.vx) > Math.abs(opp.vz)
