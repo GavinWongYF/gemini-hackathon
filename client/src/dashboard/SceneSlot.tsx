@@ -1,5 +1,5 @@
 // Mounts Akhil's 3D `CourtScene` (`client/src/scene/CourtScene.tsx` — Gemini Arena + rigged athletes)
-// wrapped in an error boundary with a clean 2D broadcast fallback. Nothing ever covers the court.
+// inside a clean architectural viewport bezel. Nothing ever sits over the court surface.
 
 import React, { Component, useEffect, useRef } from 'react';
 import type { MatchRenderState, RecordedShot } from '@shared/contracts';
@@ -69,7 +69,19 @@ export const SceneSlot: React.FC<CourtSceneProps & { containerRef?: React.RefObj
   ...props
 }) => {
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        borderRadius: 10,
+        overflow: 'hidden',
+        background: '#0d1829',
+        border: '1px solid rgba(20, 20, 19, 0.14)',
+        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.06)',
+      }}
+    >
       <SceneErrorBoundary fallback={<FallbackBroadcastCourt {...props} />}>
         <CourtScene {...props} />
       </SceneErrorBoundary>

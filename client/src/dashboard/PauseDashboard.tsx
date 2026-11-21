@@ -1,219 +1,377 @@
-// Clean Google-style top match toolbar seated ABOVE Akhil's 3D court (never drawn over the court).
+// Frontier AI Lab Match Scoreboard & Round Control Bar.
+// Seated cleanly ABOVE the 3D court viewport — nothing ever covers the court.
 
 import React from 'react';
 import type { MatchRenderState } from '@shared/contracts';
-import type { AgentConnectionStatus } from '../ai/AgentClient';
+
+export type PointWinnerRecord = 'player' | 'opponent';
 
 export interface CourtToolbarProps {
   score: MatchRenderState['score'];
   phase: MatchRenderState['phase'];
-  agentStatus: AgentConnectionStatus;
-  imuConnected: boolean;
-  imuHz: number;
-  lastSwingLabel: string | null;
-  showSidePanels: boolean;
-  onToggleSidePanels: () => void;
+  breakEvery: number;
+  pointWinners: PointWinnerRecord[];
+  rallyShotCount: number;
   onResume: () => void;
   onRestart: () => void;
   onTogglePause: () => void;
 }
 
-function formatCallLabel(raw: string): string {
-  const clean = raw.replace(/—/g, '·').trim();
-  if (!clean || clean === 'READY') return 'Ready';
-  return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
+
+function formatCallBadge(phase: MatchRenderState['phase'], rawCall: string, rallyShots: number): {
+  text: string;
+  tone: 'neutral' | 'live' | 'pause' | 'accent';
+} {
+  if (phase === 'ready') {
+    return { text: 'AWAITING READY', tone: 'neutral' };
+  }
+  if (phase === 'demo_pause') {
+    return { text: 'STRATEGY CHECKPOINT · 3D REPLAY', tone: 'pause' };
+  }
+  if (phase === 'match_over') {
+    return { text: 'EVALUATION COMPLETE', tone: 'accent' };
+  }
+  if (phase === 'serving') {
+    return { text: `ROUND ${rawCall.replace(/[^0-9]/g, '') || '1'} · SERVE`, tone: 'live' };
+  }
+  if (phase === 'rally') {
+    return {
+      text: rallyShots > 0 ? `LIVE RALLY · ${rallyShots} ${rallyShots === 1 ? 'STROKE' : 'STROKES'}` : 'LIVE RALLY',
+      tone: 'live',
+    };
+  }
+  const cleaned = rawCall.replace(/—/g, '·').replace(/!/g, '').trim();
+  return { text: cleaned || 'POINT OVER', tone: 'neutral' };
 }
+
+const KeyHint: React.FC<{ label: string; dark?: boolean }> = ({ label, dark }) => (
+  <kbd
+    style={{
+      fontFamily: MONO,
+      fontSize: 10,
+      fontWeight: 500,
+      lineHeight: 1,
+      padding: '2px 5px',
+      borderRadius: 4,
+      background: dark ? 'rgba(255,255,255,0.16)' : '#ffffff',
+      color: dark ? 'rgba(255,255,255,0.88)' : '#71717a',
+      border: dark ? '1px solid rgba(255,255,255,0.2)' : '1px solid #deddd8',
+    }}
+  >
+    {label}
+  </kbd>
+);
 
 export const PauseDashboard: React.FC<CourtToolbarProps> = ({
   score,
   phase,
-  agentStatus,
-  imuConnected,
-  imuHz,
-  lastSwingLabel,
-  showSidePanels,
-  onToggleSidePanels,
+  breakEvery,
+  pointWinners,
+  rallyShotCount,
   onResume,
   onRestart,
   onTogglePause,
 }) => {
-  const statusDot =
-    agentStatus === 'connected'
-      ? '#188038'
-      : agentStatus === 'connecting'
-        ? '#e37400'
-        : '#80868b';
+  const badge = formatCallBadge(phase, score.lastCall, rallyShotCount);
 
-  const statusText =
-    agentStatus === 'connected'
-      ? 'AI Connected'
-      : agentStatus === 'connecting'
-        ? 'AI Connecting'
-        : 'AI Local';
+  const badgeStyles: Record<typeof badge.tone, { bg: string; fg: string; border: string; dot?: string }> = {
+    neutral: { bg: '#f4f4f1', fg: '#575652', border: '#e5e4df' },
+    live: { bg: '#ecfdf5', fg: '#065f46', border: '#a7f3d0', dot: '#059669' },
+    pause: { bg: '#eff6ff', fg: '#1d4ed8', border: '#bfdbfe', dot: '#2563eb' },
+    accent: { bg: '#141413', fg: '#ffffff', border: '#141413' },
+  };
+  const bs = badgeStyles[badge.tone];
+
+  const totalRounds = score.totalDemoPoints;
+  const activePointIdx = Math.min(score.pointIndex, totalRounds);
 
   return (
     <div
       style={{
-        height: 44,
+        height: 48,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 16px',
+        padding: '0 14px',
         background: '#ffffff',
-        borderBottom: '1px solid #e3e3e3',
-        color: '#1f1f1f',
-        fontSize: 13,
+        borderBottom: '1px solid #e5e4df',
         gap: 12,
       }}
     >
-      {/* Left: Score & Point Status */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap' }}>
-          <span>Player {score.humanPoints}</span>
-          <span style={{ color: '#9aa0a6', fontWeight: 400 }}>–</span>
-          <span>{score.aiPoints} Opponent</span>
+      {/* Left: Tabular Broadcast Scoreboard */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 2,
+              background: '#2563eb',
+              display: 'inline-block',
+            }}
+          />
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: '0.03em',
+              color: '#141413',
+            }}
+          >
+            PLAYER
+          </span>
+          <span
+            style={{
+              fontFamily: MONO,
+              fontVariantNumeric: 'tabular-nums',
+              fontSize: 14,
+              fontWeight: 600,
+              minWidth: 26,
+              height: 24,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 5,
+              background: '#f4f4f1',
+              border: '1px solid #e5e4df',
+              color: '#141413',
+            }}
+          >
+            {score.humanPoints}
+          </span>
+
+          <span style={{ fontFamily: MONO, fontSize: 12, color: '#a1a1aa' }}>:</span>
+
+          <span
+            style={{
+              fontFamily: MONO,
+              fontVariantNumeric: 'tabular-nums',
+              fontSize: 14,
+              fontWeight: 600,
+              minWidth: 26,
+              height: 24,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 5,
+              background: '#f4f4f1',
+              border: '1px solid #e5e4df',
+              color: '#141413',
+            }}
+          >
+            {score.aiPoints}
+          </span>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: '0.03em',
+              color: '#141413',
+            }}
+          >
+            OPPONENT
+          </span>
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 2,
+              background: '#f97316',
+              display: 'inline-block',
+            }}
+          />
         </div>
 
-        <span style={{ width: 1, height: 14, background: '#dadce0', flexShrink: 0 }} />
+        <span style={{ width: 1, height: 16, background: '#e5e4df', flexShrink: 0 }} />
 
-        <span style={{ color: '#5f6368', whiteSpace: 'nowrap' }}>
-          Point {Math.min(score.pointIndex, score.totalDemoPoints)} of {score.totalDemoPoints}
-        </span>
+        {/* Round-by-Round Pip Timeline with Adaptation Checkpoint Dividers */}
+        <div
+          title={`Round ${activePointIdx} of ${totalRounds} (Adaptation checkpoint every ${breakEvery} points)`}
+          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+        >
+          <span
+            style={{
+              fontFamily: MONO,
+              fontSize: 10,
+              fontWeight: 500,
+              letterSpacing: '0.05em',
+              color: '#8c8b85',
+              marginRight: 3,
+            }}
+          >
+            PT {activePointIdx}/{totalRounds}
+          </span>
+          {Array.from({ length: totalRounds }, (_, i) => {
+            const winner = pointWinners[i];
+            const isCurrent = i + 1 === score.pointIndex && phase !== 'match_over';
+            const isBreakAfter = breakEvery > 0 && (i + 1) % breakEvery === 0 && i + 1 < totalRounds;
+            const bg =
+              winner === 'player'
+                ? '#2563eb'
+                : winner === 'opponent'
+                  ? '#f97316'
+                  : isCurrent
+                    ? '#141413'
+                    : '#e5e4df';
 
+            return (
+              <React.Fragment key={i}>
+                <span
+                  style={{
+                    width: 14,
+                    height: 6,
+                    borderRadius: 2,
+                    background: bg,
+                    opacity: winner ? 1 : isCurrent ? 0.85 : 0.75,
+                    transition: 'background-color 160ms ease',
+                  }}
+                />
+                {isBreakAfter && (
+                  <span
+                    style={{
+                      width: 1,
+                      height: 10,
+                      background: '#c8c7c0',
+                      margin: '0 2px',
+                    }}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        {/* Live Phase / Call Chip */}
         <span
           style={{
-            padding: '2px 10px',
-            borderRadius: 999,
-            background: '#f1f3f4',
-            color: '#3c4043',
-            fontSize: 12,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '3px 9px',
+            borderRadius: 5,
+            background: bs.bg,
+            color: bs.fg,
+            border: `1px solid ${bs.border}`,
+            fontFamily: MONO,
+            fontSize: 10.5,
             fontWeight: 500,
+            letterSpacing: '0.04em',
             whiteSpace: 'nowrap',
           }}
         >
-          {formatCallLabel(score.lastCall)}
+          {bs.dot && (
+            <span
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: '50%',
+                background: bs.dot,
+                display: 'inline-block',
+              }}
+            />
+          )}
+          {badge.text}
         </span>
-
-        {lastSwingLabel && (
-          <span
-            style={{
-              padding: '2px 10px',
-              borderRadius: 999,
-              background: '#e8f0fe',
-              color: '#0b57d0',
-              fontSize: 12,
-              fontWeight: 500,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {lastSwingLabel}
-          </span>
-        )}
       </div>
 
-      {/* Right: Sensor/AI Status & Clean Action Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#5f6368' }}>
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              background: imuConnected ? '#188038' : '#dadce0',
-              display: 'inline-block',
-            }}
-          />
-          {imuConnected ? `M5 ${imuHz}Hz` : 'Space / Click'}
-        </span>
-
-        <span style={{ width: 1, height: 14, background: '#dadce0' }} />
-
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#5f6368' }}>
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              background: statusDot,
-              display: 'inline-block',
-            }}
-          />
-          {statusText}
-        </span>
-
-        <button
-          type="button"
-          onClick={onToggleSidePanels}
-          style={{
-            background: '#f1f3f4',
-            color: '#3c4043',
-            border: 'none',
-            borderRadius: 999,
-            padding: '5px 12px',
-            fontSize: 12,
-            fontWeight: 500,
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-          }}
-        >
-          {showSidePanels ? 'Full court' : 'Side panels'}
-        </button>
-
+      {/* Right: Crisp Studio Action Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         {phase === 'demo_pause' ? (
           <button
             type="button"
+            className="lab-btn"
             onClick={onResume}
             style={{
-              background: '#0b57d0',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: '#141413',
               color: '#ffffff',
-              border: 'none',
-              borderRadius: 999,
-              padding: '6px 16px',
-              fontSize: 13,
+              border: '1px solid #141413',
+              borderRadius: 6,
+              padding: '6px 12px',
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: 'inherit',
               cursor: 'pointer',
             }}
           >
-            Next point
+            <span>Continue match</span>
+            <KeyHint label="SPACE" dark />
           </button>
         ) : phase === 'match_over' ? (
           <button
             type="button"
+            className="lab-btn"
             onClick={onRestart}
             style={{
-              background: '#0b57d0',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: '#141413',
               color: '#ffffff',
-              border: 'none',
-              borderRadius: 999,
-              padding: '6px 16px',
-              fontSize: 13,
+              border: '1px solid #141413',
+              borderRadius: 6,
+              padding: '6px 12px',
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: 'inherit',
               cursor: 'pointer',
             }}
           >
-            New match
+            <span>New evaluation</span>
+            <KeyHint label="R" dark />
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onTogglePause}
-            style={{
-              background: '#f1f3f4',
-              color: '#1f1f1f',
-              border: 'none',
-              borderRadius: 999,
-              padding: '6px 14px',
-              fontSize: 13,
-              fontWeight: 500,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            Replay
-          </button>
+          <>
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={onTogglePause}
+              disabled={phase === 'ready'}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                background: '#fafaf8',
+                color: phase === 'ready' ? '#a1a1aa' : '#141413',
+                border: '1px solid #e5e4df',
+                borderRadius: 6,
+                padding: '5px 10px',
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: 'inherit',
+                cursor: phase === 'ready' ? 'default' : 'pointer',
+              }}
+            >
+              <span>Inspect 3D arcs</span>
+              <KeyHint label="P" />
+            </button>
+            <button
+              type="button"
+              className="lab-btn"
+              onClick={onRestart}
+              title="Reset evaluation with a fresh match_id"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'transparent',
+                color: '#575652',
+                border: '1px solid transparent',
+                borderRadius: 6,
+                padding: '5px 8px',
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <span>Reset</span>
+            </button>
+          </>
         )}
       </div>
     </div>

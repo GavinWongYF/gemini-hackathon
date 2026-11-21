@@ -3,35 +3,116 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tennis · Gemini Arena</title>
+    <title>Gemini Arena — Adaptive Opponent Evaluation</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
     <style>
+      :root {
+        --lab-bg: #f4f4f1;
+        --lab-surface: #ffffff;
+        --lab-subtle: #fafaf8;
+        --lab-border: #e5e4df;
+        --lab-border-strong: #d4d3cd;
+        --lab-ink: #141413;
+        --lab-ink-secondary: #575652;
+        --lab-ink-muted: #8c8b85;
+        --lab-cobalt: #2563eb;
+        --lab-emerald: #059669;
+        --lab-amber: #d97706;
+        --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
       *, *::before, *::after {
         box-sizing: border-box;
       }
+
       html, body, #root {
         width: 100%;
         height: 100%;
         margin: 0;
-        background: #f8f9fa;
-        color: #1f1f1f;
-        font-family: 'Google Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: var(--lab-bg);
+        color: var(--lab-ink);
+        font-family: var(--font-sans);
+        font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
         -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        user-select: none;
       }
+
       .scene-root {
         position: relative;
         width: 100%;
         height: 100%;
       }
+
       npc-panel {
         display: block;
         width: 100%;
         height: 100%;
+      }
+
+      /* Calm standby state ONLY when :8000/screen/panels.js has not registered <npc-panel>.
+         Automatically disappears the instant customElements.define('npc-panel', ...) runs. */
+      npc-panel:not(:defined) {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 24px;
+        text-align: center;
+      }
+
+      npc-panel[side="left"]:not(:defined)::before {
+        content: '01 · PLAYER HABIT READ';
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        color: var(--lab-ink-muted);
+      }
+
+      npc-panel[side="right"]:not(:defined)::before {
+        content: '02 · POLICY ADAPTATION';
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        color: var(--lab-ink-muted);
+      }
+
+      npc-panel:not(:defined)::after {
+        content: 'Awaiting :8000/screen/panels.js';
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: #b5b4ae;
+      }
+
+      .lab-btn {
+        transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
+      }
+      .lab-btn:hover {
+        filter: brightness(0.97);
+      }
+      .lab-btn:active {
+        transform: translateY(0.5px);
+      }
+
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #d6d5d0;
+        border-radius: 999px;
       }
     </style>
     <script type="module" src="http://localhost:8000/screen/panels.js"></script>
