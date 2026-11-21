@@ -146,6 +146,7 @@ export class TennisMatchEngine {
   // Rally state
   private hitter: 'human' | 'ai' = 'ai';
   private pausedFromPhase: MatchPhase | null = null;
+  private pauseAfterPointRequested = false;
   private rallyShotCount = 0;
   private pendingOpponentDecision: OpponentDecisionOutput | null = null;
   private opponentTargetPos: { x: number; z: number } = { x: 0, z: COURT.AI_START_Z };
@@ -250,6 +251,7 @@ export class TennisMatchEngine {
     this.matchTimeSec = 0;
     this.pointTimeSec = 0;
     this.pausedFromPhase = null;
+    this.pauseAfterPointRequested = false;
     this.rallyShotCount = 0;
     this.shotHistory = [];
     this.shotSeq = 0;
@@ -260,6 +262,14 @@ export class TennisMatchEngine {
     this.lastOpponentShot = null;
     this.renderState = createInitialMatchRenderState(this.opts.totalDemoPoints);
     this.startNextPoint();
+  }
+
+  /**
+   * Section 19.1: Schedule an automatic `demo_pause` after the current point finishes
+   * (never mid-rally) so the presenter & audience can inspect Neon's new strategy update.
+   */
+  requestPauseAfterPoint() {
+    this.pauseAfterPointRequested = true;
   }
 
   /** Resumes play after `demo_pause` (swapping in any newly arrived agent strategy first). */
@@ -1058,12 +1068,16 @@ export class TennisMatchEngine {
   private advanceAfterPointOver() {
     const finishedRound = this.renderState.score.pointIndex - 1;
     const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
+    const isStrategyPause = this.pauseAfterPointRequested;
     const isBreak =
-      this.opts.enableDemoPauses &&
-      ((this.opts.breakEvery > 0 && finishedRound % this.opts.breakEvery === 0) ||
-        (hasPointCap && finishedRound >= this.opts.totalDemoPoints));
+      isStrategyPause ||
+      (this.opts.enableDemoPauses &&
+        ((this.opts.breakEvery > 0 && finishedRound % this.opts.breakEvery === 0) ||
+          (hasPointCap && finishedRound >= this.opts.totalDemoPoints)));
 
     if (isBreak) {
+      this.pauseAfterPointRequested = false;
+      this.pausedFromPhase = 'point_over';
       this.renderState.replayArcs = this.shotHistory.slice(-10);
       this.setPhase('demo_pause');
       return;
