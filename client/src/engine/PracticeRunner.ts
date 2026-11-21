@@ -113,13 +113,28 @@ export function createSeededRng(seed: number): () => number {
   };
 }
 
+export class UnknownPracticePlayerError extends Error {
+  readonly playerName: string;
+  constructor(playerName: string) {
+    super(
+      `Unknown practice player "${playerName}". Expected one of: ${Object.keys(BUILTIN_SCRIPTED_PLAYERS).join(', ')}, or a PracticePersona object.`,
+    );
+    this.name = 'UnknownPracticePlayerError';
+    this.playerName = playerName;
+  }
+}
+
 /**
  * Converts an agent-generated `PracticePersona` (Notion 12:15 PM spec) into a concrete
  * `ScriptedPlayerProfile` whose strengths/weaknesses emerge naturally from its `plays` habits.
  */
 export function personaToScriptedProfile(player: string | PracticePersona): ScriptedPlayerProfile {
   if (typeof player === 'string') {
-    return BUILTIN_SCRIPTED_PLAYERS[player] ?? BUILTIN_SCRIPTED_PLAYERS.even;
+    const known = BUILTIN_SCRIPTED_PLAYERS[player];
+    if (!known) {
+      throw new UnknownPracticePlayerError(player);
+    }
+    return known;
   }
 
   // If the persona matches a built-in name and has no plays override, start from it

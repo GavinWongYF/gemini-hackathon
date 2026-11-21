@@ -1,10 +1,11 @@
-// Three-Column 3D Live Match View (`/match`, Notion Section 9 @ 1:20 PM + Akhil's 3D `CourtScene`):
+// Three-Column 3D Live Match View (`/match`, Notion Section 9 @ 1:20 PM + Section 10 fixes):
 //   - Left narrow box:   `<npc-panel side="left" />` (stays empty when :8000 is offline)
 //   - Middle wide box:   Uncovered 3D Gemini Arena (`<SceneSlot />` -> Akhil's `CourtScene`)
 //   - Right narrow box:  `<npc-panel side="right" />` (stays empty when :8000 is offline)
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { MatchRenderState, RecordedShot } from '@shared/contracts';
+import { TENNIS_MATCH_PLAN } from '@shared/agentProtocol';
 import { hardwareInput } from '../hardware/HardwareInputManager';
 import { AgentClient, type AgentConnectionStatus } from '../ai/AgentClient';
 import { OpponentBrain } from '../ai/OpponentBrain';
@@ -26,9 +27,14 @@ declare global {
 }
 
 export const LiveMatchView: React.FC = () => {
-  const matchStateRef = useRef<MatchRenderState>(createInitialMatchRenderState(6));
+  const matchStateRef = useRef<MatchRenderState>(
+    createInitialMatchRenderState(TENNIS_MATCH_PLAN.rounds),
+  );
   const sceneContainerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<TennisMatchEngine | null>(null);
+  const agentRef = useRef<AgentClient | null>(null);
+  const brainRef = useRef<OpponentBrain | null>(null);
+  const matchEpochRef = useRef(0);
 
   const [phase, setPhase] = useState<MatchRenderState['phase']>('ready');
   const [score, setScore] = useState<MatchRenderState['score']>(matchStateRef.current.score);
@@ -40,9 +46,12 @@ export const LiveMatchView: React.FC = () => {
   const [showSidePanels, setShowSidePanels] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     hardwareInput.start();
 
     const brain = new OpponentBrain();
+    brainRef.current = brain;
+
     const agent = new AgentClient({
       mode: 'live',
       callbacks: {
@@ -58,10 +67,11 @@ export const LiveMatchView: React.FC = () => {
         },
       },
     });
+    agentRef.current = agent;
 
     const engine = new TennisMatchEngine(brain, {
-      totalDemoPoints: 6,
-      breakEvery: 2,
+      totalDemoPoints: TENNIS_MATCH_PLAN.rounds,
+      breakEvery: TENNIS_MATCH_PLAN.break_every,
       enableDemoPauses: true,
       sink: {
         onAgentEvent: (evt) => {
@@ -82,11 +92,20 @@ export const LiveMatchView: React.FC = () => {
     });
     engineRef.current = engine;
 
-    engine.startMatch();
+    // Wait in `ready` state until `connectAndSetup()` resolves so round 1 never fires before `ready`!
+    const initialEpoch = ++matchEpochRef.current;
+    engine.resetToReady();
     engine.syncToRenderState(matchStateRef.current);
-    setPhase(engine.getRenderState().phase);
+    setPhase('ready');
     setScore({ ...engine.getRenderState().score });
-    void agent.connectAndSetup();
+
+    void agent.connectAndSetup().then(() => {
+      if (cancelled || matchEpochRef.current !== initialEpoch) return;
+      engine.startMatch();
+      engine.syncToRenderState(matchStateRef.current);
+      setPhase(engine.getRenderState().phase);
+      setScore({ ...engine.getRenderState().score });
+    });
 
     const unsubSwingStart = hardwareInput.onSwingStart((evt) => {
       engine.handlePlayerSwingStart(evt);
@@ -161,6 +180,8 @@ export const LiveMatchView: React.FC = () => {
     rafId = requestAnimationFrame(tick);
 
     return () => {
+      cancelled = true;
+      matchEpochRef.current += 1;
       cancelAnimationFrame(rafId);
       window.removeEventListener('keydown', onKeyDown);
       unsubSwingStart();
@@ -174,11 +195,26 @@ export const LiveMatchView: React.FC = () => {
   }, []);
 
   const handleRestart = useCallback(() => {
-    engineRef.current?.startMatch();
-    if (engineRef.current) {
-      setScore({ ...engineRef.current.getRenderState().score });
-      setPhase(engineRef.current.getRenderState().phase);
-    }
+    const engine = engineRef.current;
+    const agent = agentRef.current;
+    const brain = brainRef.current;
+    if (!engine || !agent || !brain) return;
+
+    const epoch = ++matchEpochRef.current;
+    brain.resetToBaseline();
+    engine.resetToReady();
+    engine.syncToRenderState(matchStateRef.current);
+    setRecentShots([]);
+    setPhase('ready');
+    setScore({ ...engine.getRenderState().score });
+
+    void agent.startNewMatch().then(() => {
+      if (matchEpochRef.current !== epoch) return;
+      engine.startMatch();
+      engine.syncToRenderState(matchStateRef.current);
+      setPhase(engine.getRenderState().phase);
+      setScore({ ...engine.getRenderState().score });
+    });
   }, []);
 
   const handleTogglePause = useCallback(() => {
@@ -198,7 +234,7 @@ export const LiveMatchView: React.FC = () => {
   const handleCanvasClick = useCallback(() => {
     if (engineRef.current?.getRenderState().phase === 'demo_pause') {
       engineRef.current.resumeFromDemoPause();
-    } else {
+    } else if (engineRef.current?.getRenderState().phase !== 'ready') {
       hardwareInput.triggerManualSwing();
     }
   }, []);

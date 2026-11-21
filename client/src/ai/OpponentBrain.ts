@@ -89,6 +89,17 @@ export class OpponentBrain {
     this.rng = rng;
   }
 
+  /** Reset brain back to baseline behaviour, default settings, and empty values for a new match. */
+  resetToBaseline() {
+    this.activeBehaviour = structuredClone(this.baselineBehaviour);
+    this.pendingBehaviour = null;
+    this.activeSettings = {
+      opponent_speed: TENNIS_SETTINGS_BOUNDS.opponent_speed.default,
+    };
+    this.pendingSettings = null;
+    this.latestValues = {};
+  }
+
   /** Set the initial version-1 behaviour received in `ready` (before round 1). */
   applyReadyBehaviour(behaviour: BehaviourJson) {
     this.activeBehaviour = structuredClone(behaviour);

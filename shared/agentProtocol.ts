@@ -145,7 +145,8 @@ export type GameToAgentMessage =
   | GameEventMessage
   | GameFramesMessage
   | GameRoundEndMessage
-  | GamePracticeResultMessage;
+  | GamePracticeResultMessage
+  | AgentErrorMessage;
 
 export type AgentToGameMessage =
   | AgentReadyMessage
@@ -243,6 +244,13 @@ export const TENNIS_SETTINGS_BOUNDS = {
   opponent_speed: { min: 0.65, max: 1.25, default: 0.85 },
 } as const;
 
+export const TENNIS_MATCH_PLAN = {
+  rounds: 6,
+  break_every: 2,
+  break_seconds: 5,
+  update_seconds: 20,
+} as const;
+
 export const DEFAULT_TENNIS_BEHAVIOUR: BehaviourJson = {
   version: 0,
   npcs: {
@@ -313,10 +321,10 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
       opts.goal ??
       'Start beatable. Work out what this player relies on to win points and take it away, one habit at a time, until the player wins about half the points. Win by choosing better shots, never by hitting harder or faster.',
     plan: {
-      rounds: opts.rounds ?? 6,
-      break_every: opts.breakEvery ?? 1,
-      break_seconds: opts.breakSeconds ?? 5,
-      update_seconds: opts.updateSeconds ?? 20,
+      rounds: opts.rounds ?? TENNIS_MATCH_PLAN.rounds,
+      break_every: opts.breakEvery ?? TENNIS_MATCH_PLAN.break_every,
+      break_seconds: opts.breakSeconds ?? TENNIS_MATCH_PLAN.break_seconds,
+      update_seconds: opts.updateSeconds ?? TENNIS_MATCH_PLAN.update_seconds,
     },
     lists: {
       zone: [...TENNIS_COURT_ZONES],
@@ -474,7 +482,8 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
       swing_arm_zone: 'arm_zone',
     },
     views: {
-      court: 'The 3D game screen showing both halves of the tennis court.',
+      court:
+        'Broadcast view of both halves of the tennis court showing player, AI opponent, and ball positions (3D stadium court, or 2D tactical court fallback).',
       player_cam: 'Unmirrored webcam on the player showing upper body and racket arm.',
     },
     settings: {
@@ -561,10 +570,14 @@ export function pick<T extends string>(
   rng: () => number = Math.random,
 ): PickResult<T> {
   if (legal.length === 0) {
-    throw new Error(`pick(${npc}, ${decision}) called with empty legal options`);
+    return { choice: '' as T, byRule: false, scores: {} };
   }
 
   const mine = behaviour?.npcs?.[npc];
+  if (!mine) {
+    const idx = Math.min(legal.length - 1, Math.floor(rng() * legal.length));
+    return { choice: legal[idx], byRule: false, scores: {} };
+  }
   const legalSet = new Set<string>(legal);
 
   // 1. Rules first. The first rule whose conditions all hold and whose choice is legal decides.

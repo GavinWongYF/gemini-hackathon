@@ -36,6 +36,7 @@ export interface AgentClientCallbacks {
   onStrategyUpdate?: (msg: AgentStrategyUpdateMessage) => void;
   onPracticeRun?: (msg: AgentPracticeRunMessage) => void;
   onError?: (msg: AgentErrorMessage) => void;
+  onServerClose?: () => void;
 }
 
 export interface WebSocketLike {
@@ -54,6 +55,8 @@ export interface AgentClientOptions {
   matchId?: string;
   /** If true, never opens a real socket and uses local mock adaptation immediately */
   forceMock?: boolean;
+  /** Whether to reconnect automatically when the socket closes (default: true in live, false in practice) */
+  autoReconnect?: boolean;
   /** Timeout (ms) to wait for `ready` before starting with default_behaviour */
   readyTimeoutMs?: number;
   /** Optional WebSocket constructor for Node headless practice runs */
@@ -67,6 +70,7 @@ export class AgentClient {
   private wsUrl: string;
   private setupMsg: GameSetupMessage;
   private forceMock: boolean;
+  private autoReconnect: boolean;
   private readyTimeoutMs: number;
   private WebSocketCtor: (new (url: string) => WebSocketLike) | null;
   private callbacks: AgentClientCallbacks;
@@ -92,10 +96,8 @@ export class AgentClient {
     this.wsUrl = opts.wsUrl ?? envUrl ?? 'ws://localhost:8000/ws';
     const mode = opts.mode ?? 'live';
     this.forceMock = opts.forceMock ?? false;
-    // Per Notion API Design & 12:40 PM build notes: once connected to a live server,
-    // first-time Carbon setup can take 45-90s (and practice runs 1-2 min). If the socket
-    // fails to open (server offline), `onerror`/`onclose` falls back to mock immediately!
-    this.readyTimeoutMs = opts.readyTimeoutMs ?? (mode === 'practice' ? 180_000 : 90_000);
+    this.autoReconnect = opts.autoReconnect ?? mode !== 'practice';
+    this.readyTimeoutMs = opts.readyTimeoutMs ?? (mode === 'practice' ? 300_000 : 120_000);
     this.callbacks = opts.callbacks ?? {};
     this.WebSocketCtor =
       opts.WebSocketCtor ??
@@ -104,7 +106,7 @@ export class AgentClient {
         : null);
 
     this.setupMsg = createTennisSetup({
-      matchId: opts.matchId ?? `tennis_${Date.now().toString(36)}`,
+      matchId: opts.matchId ?? `tennis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
       mode,
     });
   }
@@ -175,6 +177,25 @@ export class AgentClient {
         },
       );
     });
+  }
+
+  /**
+   * Starts a brand-new match with a fresh `match_id`, reconnecting and resending `setup`
+   * so restarted matches never merge into a previous `match_id` on the agent server.
+   */
+  startNewMatch(newMatchId?: string): Promise<AgentReadyMessage> {
+    this.disconnect();
+    this.mockShotCount = 0;
+    this.mockBackhandCount = 0;
+    this.mockForehandCount = 0;
+    this.mockDropshotCount = 0;
+    this.mockVersion = 1;
+    this.setupMsg = {
+      ...this.setupMsg,
+      match_id:
+        newMatchId ?? `tennis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    };
+    return this.connectAndSetup();
   }
 
   disconnect() {
@@ -270,6 +291,16 @@ export class AgentClient {
     this.sendJson(msg);
   }
 
+  /** Reports a client-side validation error (e.g. unknown practice player name). */
+  sendError(payload: Omit<AgentErrorMessage, 'type' | 'match_id'>) {
+    const msg: AgentErrorMessage = {
+      type: 'error',
+      match_id: this.setupMsg.match_id,
+      ...payload,
+    };
+    this.sendJson(msg);
+  }
+
   private openSocket(onFirstReady?: (msg: AgentReadyMessage) => void, onInitialConnectFail?: () => void) {
     if (!this.WebSocketCtor) return;
     this.setStatus('connecting');
@@ -323,7 +354,10 @@ export class AgentClient {
         if (this.status === 'connected' || this.status === 'connecting') {
           this.setStatus(this.readyReceived ? 'disconnected' : 'mock');
         }
-        this.scheduleReconnect();
+        this.callbacks.onServerClose?.();
+        if (this.autoReconnect) {
+          this.scheduleReconnect();
+        }
       };
 
       ws.onerror = () => {

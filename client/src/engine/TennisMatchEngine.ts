@@ -212,6 +212,24 @@ export class TennisMatchEngine {
     target.replayArcs = this.renderState.replayArcs;
   }
 
+  /** Resets court and score into `ready` waiting state before `ready` arrives from the server. */
+  resetToReady() {
+    this.matchTimeSec = 0;
+    this.pointTimeSec = 0;
+    this.phaseTimerSec = 0;
+    this.rallyShotCount = 0;
+    this.shotHistory = [];
+    this.shotSeq = 0;
+    this.activeShotArc = [];
+    this.activeShotRecord = null;
+    this.opponentHitScheduled = false;
+    this.pendingOpponentDecision = null;
+    this.lastOpponentShot = null;
+    this.renderState = createInitialMatchRenderState(this.opts.totalDemoPoints);
+    this.renderState.score.lastCall = 'WAITING FOR READY';
+    this.sink.onPhaseChange?.('ready');
+  }
+
   /** Starts a fresh match from point 1. */
   startMatch() {
     this.matchTimeSec = 0;

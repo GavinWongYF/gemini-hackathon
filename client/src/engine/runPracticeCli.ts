@@ -1,14 +1,19 @@
 // Node CLI entrypoint for headless practice mode & local proof verification.
 // Usage:
-//   Benchmark locally (proves >=25% shot-choice margin):
-//     node ... --benchmark
 //   Connect to Felix & Gavin's live WebSocket server in `mode: "practice"`:
-//     node ... --ws ws://localhost:8000/ws
+//     cd client && npm run practice
+//     cd client && npm run practice -- --ws ws://localhost:8000/ws
+//   Benchmark locally (proves >=25% shot-choice margin):
+//     cd client && npm run practice:benchmark
 
 import type { BehaviourJson, PracticePersona } from '@shared/contracts';
 import { DEFAULT_TENNIS_BEHAVIOUR } from '@shared/agentProtocol';
 import { AgentClient, type WebSocketLike } from '../ai/AgentClient';
-import { compareBehavioursHeadless, runPracticeBatch } from './PracticeRunner';
+import {
+  UnknownPracticePlayerError,
+  compareBehavioursHeadless,
+  runPracticeBatch,
+} from './PracticeRunner';
 
 function makeCounterBehaviour(
   shotType: 'slice' | 'dropshot' | 'lob',
@@ -75,44 +80,72 @@ export async function connectPracticeWorker(wsUrl: string) {
     WsCtor = wsMod.default as unknown as new (url: string) => WebSocketLike;
   }
 
-  const client = new AgentClient({
-    wsUrl,
-    mode: 'practice',
-    matchId: `tennis_practice_${Date.now().toString(36)}`,
-    readyTimeoutMs: 120_000,
-    WebSocketCtor: WsCtor,
-    callbacks: {
-      onStatus: (s) => console.log(`[PracticeCLI] status=${s}`),
-      onPracticeRun: (req) => {
-        runCounter += 1;
-        const { reply, durationMs } = runPracticeBatch(req, 1000 + runCounter * 37);
-        console.log(
-          `[PracticeCLI] run_id=${req.run_id} player=${reply.player} rounds=${reply.rounds} wins=${JSON.stringify(reply.wins)} (${durationMs}ms)`,
-        );
-        client.sendPracticeResult(reply);
+  await new Promise<void>((resolve) => {
+    const client = new AgentClient({
+      wsUrl,
+      mode: 'practice',
+      matchId: `tennis_practice_${Date.now().toString(36)}`,
+      autoReconnect: false,
+      readyTimeoutMs: 300_000,
+      WebSocketCtor: WsCtor,
+      callbacks: {
+        onStatus: (s) => console.log(`[PracticeCLI] status=${s}`),
+        onPracticeRun: (req) => {
+          runCounter += 1;
+          try {
+            const { reply, durationMs } = runPracticeBatch(req, 1000 + runCounter * 37);
+            console.log(
+              `[PracticeCLI] run_id=${req.run_id} player=${reply.player} rounds=${reply.rounds} wins=${JSON.stringify(reply.wins)} (${durationMs}ms)`,
+            );
+            client.sendPracticeResult(reply);
+          } catch (err) {
+            if (err instanceof UnknownPracticePlayerError) {
+              console.error(`[PracticeCLI] ${err.message}`);
+              client.sendError({
+                where: 'practice_run.player',
+                about: err.message,
+                got: req.player,
+              });
+            } else {
+              throw err;
+            }
+          }
+        },
+        onReady: (ready) => {
+          console.log(
+            `[PracticeCLI] ready! learned values=${Object.keys(ready.values).join(', ')} behaviour v${ready.behaviour.version} (staying connected until server closes socket)`,
+          );
+        },
+        onError: (err) => {
+          console.error(`[PracticeCLI] server error at ${err.where}: ${err.about}`);
+        },
+        onServerClose: () => {
+          console.log('[PracticeCLI] server closed socket; exiting cleanly.');
+          resolve();
+        },
       },
-      onReady: (ready) => {
-        console.log(
-          `[PracticeCLI] ready! learned values=${Object.keys(ready.values).join(', ')} behaviour v${ready.behaviour.version}`,
-        );
-        client.disconnect();
-      },
-      onError: (err) => {
-        console.error(`[PracticeCLI] server error at ${err.where}: ${err.about}`);
-      },
-    },
-  });
+    });
 
-  await client.connectAndSetup();
+    void client.connectAndSetup().then(() => {
+      if (client.getStatus() === 'mock') {
+        console.error(`[PracticeCLI] Could not connect to ${wsUrl} (or timed out waiting for ready).`);
+        resolve();
+      }
+    });
+  });
 }
 
 // Execute directly when invoked as CLI script
 const args = typeof process !== 'undefined' ? process.argv.slice(2) : [];
 if (args.includes('--benchmark')) {
   void runLocalBenchmark();
+} else if (args.includes('--help') || args.includes('-h')) {
+  console.log('Usage: npm run practice [-- --ws ws://localhost:8000/ws] | npm run practice:benchmark');
 } else {
-  const wsIdx = args.indexOf('--ws');
-  if (wsIdx >= 0 && args[wsIdx + 1]) {
-    void connectPracticeWorker(args[wsIdx + 1]);
-  }
+  const wsIdx = args.lastIndexOf('--ws');
+  const wsUrl =
+    wsIdx >= 0 && args[wsIdx + 1]
+      ? args[wsIdx + 1]
+      : (typeof process !== 'undefined' && process.env.AGENT_WS_URL) || 'ws://localhost:8000/ws';
+  void connectPracticeWorker(wsUrl);
 }
