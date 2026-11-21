@@ -166,7 +166,7 @@ This is what lets the agent server count a player's habits in a game it has neve
   "type": "setup",
   "match_id": "m_001",
   "game": "tennis",
-  "about": "One human player plays single points against one AI opponent. The player is at the bottom of the screen.",
+  "about": "One human player plays single points against one AI opponent. The player stands stationary at the center baseline swinging a physical M5 IMU racket controller while a webcam tracks their stroke side (forehand/backhand) and swing path.",
   "mode": "live",
   "goal": "Start beatable. Work out what this player relies on to win points and take it away, one habit at a time, until the player wins about half the points. Win by choosing better shots, never by hitting harder or faster.",
   "plan": {"rounds": 5, "break_every": 1, "break_seconds": 3, "update_seconds": 20},
@@ -381,7 +381,7 @@ It names the values the agent server will track for this game, and gives the fir
 | --- | --- | --- |
 | `type` | string | `"ready"` |
 | `match_id` | string | Same as in `setup`. |
-| `values` | object | Every value the agent server will send, each with a plain `label` for the break screen. |
+| `values` | object | Every value the agent server will send. Each has a plain `label`, its `kind`, and the `event` and `field` it counts. See [What each value is](#what-each-value-is). |
 | `behaviour` | object | The first behaviour, version 1. The game starts the match with this. |
 
 ```json
@@ -389,10 +389,12 @@ It names the values the agent server will track for this game, and gives the fir
   "type": "ready",
   "match_id": "m_001",
   "values": {
-    "comes_to_net": {"label": "Comes up to the net"},
-    "stays_deep": {"label": "Stays back at the baseline"},
-    "forehand_goes_cross_court": {"label": "Hits the forehand cross-court"},
-    "looks_tired": {"label": "Looks tired on camera"}
+    "comes_to_net": {"label": "Comes up to the net", "kind": "camera"},
+    "stays_deep": {"label": "Stays back at the baseline", "kind": "camera"},
+    "forehand_goes_cross_court": {"label": "Hits the forehand cross-court", "kind": "share", "event": "shot", "field": "lands"},
+    "swings_hard": {"label": "Swings hard", "kind": "level", "event": "shot", "field": "power"},
+    "like_forehand_lover": {"label": "Plays like the forehand lover", "kind": "likeness"},
+    "looks_tired": {"label": "Looks tired on camera", "kind": "camera"}
   },
   "behaviour": {
     "version": 1,
@@ -419,6 +421,31 @@ It names the values the agent server will track for this game, and gives the fir
   }
 }
 ```
+
+### What each value is
+
+Each value is a number from 0 to 1. Its `kind` says what sort of read it is.
+
+| `kind` | What it reads | Tennis | Another game |
+| --- | --- | --- | --- |
+| `share` | How often the player picks some options of one field. | How often the shot is a slice. | In a shooter, how often the player comes in through the flank. |
+| `level` | How big a number field usually is, for a field declared with `min` and `max`. | How hard the player swings. | In a racing game, how fast the player takes corners. |
+| `camera` | Something only the pictures show. | Stands side-on to the camera. | In a shooter, leans in close to the screen. |
+| `likeness` | How much the player plays like one practice player. | Plays like `forehand_lover`. | In a shooter, plays like a rusher. |
+
+- `event` and `field` name what a `share` or `level` value counts, using the game's own names.
+- They are left out for `camera` and `likeness` values, which count nothing.
+
+### What setup writes
+
+At setup, the designer writes the values and the practice players from the `setup` description alone.
+
+- **8 to 10 values that aren't likeness.** At most two of them count the same field.
+- **At least two camera values** when a view shows the player.
+- **A level value** for a player field declared with `min` and `max`.
+- **No value on something the player doesn't choose.** A field that reports how an action turned out, or what the other side did, is never a habit.
+- **The game's own practice players keep their numbers.** When `setup.practice.players.<name>.plays` is there, it is used as given.
+- **The written practice players cover every main option.** For each main option nobody else leans on, one practice player makes it their main choice.
 
 The game waits for `ready` before the first round. If play starts early anyway, the server holds up to 500 `event`, `frames` and `round_end` messages that arrive before `ready`, and takes them in once `ready` is sent. Only the newest `frames` is kept.
 
@@ -549,7 +576,7 @@ Nothing comes straight back. Before the next round starts, the game swaps in the
 
 ## 6. player_read
 
-Agents to game, during a round, after player events. It arrives about once a second at most.
+Agents to game, during play. A read starts after every player event, never closer together than `NPC_WATCH_MIN_INTERVAL_SECONDS`, and pictures start reads too.
 
 It is the agent server's current read of how this player plays. The game doesn't need to understand it. It only plugs the numbers into the behaviour's `when` entries the next time an NPC picks.
 
@@ -585,8 +612,11 @@ It is the agent server's current read of how this player plays. The game doesn't
 
 - The values are smoothed, so one odd event doesn't swing them.
 - A value can say what it counts: one field of one event, and which of its options count. Such a value is blended with the counted share from the player's events, and its `why` says what it rests on. This lives in the design, not on the wire.
+- **One call carries every question.** Each read sends the counts from the player's last 20 events, the newest frames, and every question the designer wrote.
+- **Pictures start reads in a rally.** While the player's last event was under 2 seconds ago, fresh frames start a read once the last one is 0.6 seconds old.
+- **A quiet player is still read.** After 3 seconds with no player event, fresh frames alone start a read.
+- **Reads pause when nobody plays.** After 20 seconds with no player event, frames start no reads until the player acts again.
 - A read that takes longer than 1.2 seconds is tried once more.
-- When the player has done nothing for 3 seconds, fresh pictures alone start a read.
 - If a `player_read` is late, the game keeps using the last one.
 
 ## 7. strategy_update
@@ -602,12 +632,15 @@ It carries the new behaviour and the words for the break screen: what the agent 
 | `version` | number | The version of the behaviour inside. |
 | `source` | string | `"quick"` for a routine update written while play goes on. `"full"` for a deeper rewrite written at a break, when the break is long enough. Either can arrive at any time. |
 | `writer` | string, optional | What wrote it: `"fast"`, `"standard"`, `"deep"` or `"deepest"`, or `"fairness"` for a fairness adjustment. |
-| `observations` | array of strings | 2 or 3 lines on how this player plays, the most important first. About 12 words each, with no raw scores. |
-| `plan` | array of strings | 2 or 3 lines on what the NPCs will change, the most important first. About 12 words each, with no raw scores. |
+| `observations` | array of strings | 2 or 3 lines on how this player plays. On a real update they are at most 3 counted lines, of at most 10 words, about what the player did since the last real update. |
+| `plan` | array of strings | At most 3 lines on what the NPCs will change, of at most 8 words each. The change of play comes first, and a setting that moves comes second with its reason, in a longer line. |
+| `seen` | array, optional | On a real update, the same lines as `observations`, each as `{"text", "event", "field"}`, so a screen can show what each line is about. |
+| `changing` | array, optional | On a real update, the same lines as `plan`, each as `{"text", "where"}`. |
+| `holding` | true, optional | Set on a holding update, which changes nothing. |
 | `changes` | array | Each change: `where` it is, what it went `from` and `to`, and `why`. `where` reads like `opponent.position.left_deep`, `opponent.rules` or `settings.enemy_count`. A change may also carry `expect`, one plain sentence on what should happen next, `measure`, what that will be judged by (like `player_win_rate`), and `kind`, which is `"fairness"` for a fairness adjustment. |
 | `checks` | array, optional | One for each earlier `expect` that can now be judged. See [Did the last change work?](#did-the-last-change-work) |
 | `tested` | object, optional | Sent when a managed agent wrote the update. It says what was measured, the target, which rule set was kept and how close it came, and every rule set it tried. |
-| `new_values` | object, optional | Values the agent server added at this break, in the same shape as in `ready`. |
+| `new_values` | object, optional | Values the agent server added, in the same shape as in `ready`: `label`, `kind`, and `event` and `field` when it counts one. |
 | `settings` | object, optional | The settings to change, by name. The game applies them when the next round starts. |
 | `behaviour` | object | The whole new behaviour. It replaces the old one. |
 
@@ -676,7 +709,7 @@ It carries the new behaviour and the words for the break screen: what the agent 
 - The game keeps the newest one it has received. It swaps it in at the next gap between rounds, never in the middle of one.
 - A newer one replaces an older one that hasn't been swapped in yet.
 - The game resumes when the break timer runs out, with the newest behaviour it holds.
-- Every look that completes sends an update. When nothing changes, it is a holding update: `changes` is empty, the play is the same, the version is new, and `plan` says why.
+- Every look that completes sends an update. When nothing changes, it is a holding update: `changes` is empty, `"holding": true`, the play is the same, the version is new, and `plan` says why.
 - If nothing arrives, the game carries on with the old behaviour.
 - A numeric setting that a game marks as a difficulty or pacing dial, such as how fast the NPC moves, is changed by the agent server only as a fairness adjustment. It slows the NPC when the player is losing too many points and speeds it up when the player is winning too many, in small steps inside the setting's `min` and `max`. It is never used to answer a habit. The `changes` item for it says it is a fairness adjustment. It arrives in `settings`, as above. No shapes change.
 
@@ -729,20 +762,30 @@ Practice runs show which option wins more often against which practice player. T
 - **An option that clearly beats the default against at least 75% of the practice players is general.** It says nothing about this player, so it gets no new rule, and its weight rises by at most 0.15 in one update.
 - **An option that wins 90% or more against every practice player is a hole in the game.** It is never raised.
 
+## A real update, and what a game can do with it
+
+- **A real update is a `strategy_update` whose `changes` is not empty.** A holding update has `changes: []` and `"holding": true`, and leaves the play as it is.
+- **A game that stops to show each change tests `changes`.** The tennis demo does: at the end of the point it pauses and shows the change. A game that doesn't stop should run the server with `NPC_UPDATES_STOP_PLAY=0`.
+- **The play clock only runs while events arrive.** The time between two `event` or `round_end` messages counts when it is under 3 seconds. A longer gap is a pause.
+- **The first look starts after 3 player events**, or after 6 seconds, whichever comes first.
+- **After a real update, the next look starts at the first player event that follows.** No real update goes out within 10 seconds of play after the last one. Looks written before a real update are dropped, because they were written for the old play.
+- **An update goes out only while the game is playing**, within 1.5 seconds of an `event` or `round_end`. One that lands during a stop waits until play picks up again.
+- **Strength waits for proof.** A strengthening written before the last change has been played is kept. It is sent only once 2 rounds that started after the last real update have finished and the player won the last one. It is dropped after 4 such rounds.
+- **Every finished round counts**, including one the player never touched.
+
 ## Fairness
 
-The agent server keeps each match inside a fair band, so the player wins a fair share of rounds.
-
-- **One blended number decides everything.** The practice table's estimate of the player's share counts as 8 rounds, and the rounds actually played are added to it: (estimate x 8 + rounds won) / (8 + rounds played). The fair band for it is 0.42 to 0.58.
-- **Below the band, the NPCs ease.** The fairness check takes the newest counter off, or turns a fairness setting one step easier.
-- **The emergency brake** eases after 5 losses in a row, whatever the blended number says.
-- **Strength is added only after a win.** The player must have won the most recent round when the update is sent. One update adds at most 0.15 of a decision's picks to an option.
-- **No flip-flopping.** After any change in strength, nothing moves the other way for 3 rounds. The brake is the one exception.
-- **A fairness setting never moves while the blended number is inside the band.** It is turned harder only as the last step, on its own, after a win.
-- **Nothing whose estimate falls under the floor is sent.** If a new rule would push the estimate below 0.42, the counter goes in as a weight sized to leave the player about half, not as a rule.
-- **A rule fairness took off never comes back as a rule.** Its option's weight stays capped under what it was, and nothing of it comes back for 4 rounds.
+- **The measure is the player's share of the last 8 finished rounds.** While fewer have finished, the missing ones are filled from the practice table's estimate.
+- **Above 60%, the next look adds strength.** The first real update of a match may go out from 50%, once the player has sent at least 3 events.
+- **Under 40%, the very next look takes strength back.** It is done in code with no model call, and the update says so. An ease takes back half of the latest step, or all of it when the share is under 25%.
+- **In between, it holds.**
+- **The emergency brake** eases after 5 losses in a row, whatever the share says.
+- **Eases are spaced out.** After an ease, the next one waits until 2 more rounds have finished.
+- **The step is capped.** One update adds at most 0.15 of a decision's picks to an option, and the cap widens up to 0.35 when the player is far above the band.
+- **The latest step is also judged alone.** If the player won 1 round or fewer in at least 4 rounds since it, it was too much.
+- **Nothing whose estimate falls under 0.42 is sent.** Such a counter goes in as a weight sized to leave the player about half, not as a rule.
+- **A rule fairness took off never comes back as a rule.** Its option's weight stays capped under what it was.
 - **A rule that decides almost every pick** (80% or more over at least 5 picks) isn't about a situation any more, so the next look takes it off.
-- **The band is tested again when a slow update lands**, because rounds may have ended while it was written.
 - These thresholds are settings. [running.md](running.md#settings) lists them.
 
 ## 8. error
@@ -884,13 +927,14 @@ This one is not for the game. A second socket at `ws://AGENT_HOST:8000/watch` se
 Each line is one JSON object:
 
 ```json
-{"dir": "in", "t": 12.4, "match": "m_001", "message": {"type": "event", "match_id": "m_001", "name": "shot"}}
+{"dir": "in", "t": 12.4, "at": 1795294812.305, "match": "m_001", "message": {"type": "event", "match_id": "m_001", "name": "shot"}}
 ```
 
 - `dir` is `"in"` for game to agents, `"out"` for agents to game, and `"trace"` for something the agent server did.
 - `t` is seconds since the match started.
+- `at` is the clock time, in seconds since 1970.
 - `match` is the match id, so a viewer can tell matches apart.
-- On connect, the server first sends the match so far.
+- On connect, a viewer that names no match is first sent every match that spoke in the last two minutes, the one that spoke last at the end. Then everything comes live.
 - `/watch?match_id=<id>` sends only that match.
 - When a game's socket closes, the stream carries one closing trace for that match: stage `server`, status `done`, about `The game left.` and `data` `{"game": "left"}`.
 
@@ -903,3 +947,5 @@ A trace message looks like this:
 - `stage` is `server`, `designer`, `playtest`, `watcher`, `adapter` or `measures`.
 - `status` is `start`, `done` or `error`.
 - After each round the server sends a `measures` trace whose `data` holds the player's top habits, each habit's payoff, and the player's share of rounds won.
+- About every 10 seconds a `server` trace reports the reads: how many started, how many came back, their median time and reads per second.
+- At each real update a `server` trace gives the play seconds and the clock seconds since the last change.

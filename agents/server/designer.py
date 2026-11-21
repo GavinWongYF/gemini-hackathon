@@ -307,7 +307,7 @@ def counted_fields(values: list[ValueSpec]) -> list[tuple[str, str]]:
     """Every (event, field) that some value counts. Likeness is judged on these, so every practice player needs them."""
     found: list[tuple[str, str]] = []
     for spec in values:
-        if spec.counts and (spec.counts["event"], spec.counts["field"]) not in found:
+        if spec.counts and not spec.counts.get("mean") and (spec.counts["event"], spec.counts["field"]) not in found:
             found.append((spec.counts["event"], spec.counts["field"]))
     return found
 
@@ -433,7 +433,8 @@ def _schema(setup: Message) -> dict[str, Any]:
     picks = [f"{event}.{field_name}={value}" for event, field_name, values in list_fields(setup) for value in values]
     plays_item = {
         "type": "object",
-        "properties": {"pick": {"type": "string", "enum": picks}, "share": {"type": "number"}},
+        # A plain string, checked against the setup in code: an enum of every pick made the schema too big to serve.
+        "properties": {"pick": text, "share": {"type": "number"}},
         "required": ["pick", "share"],
     }
     persona = {
@@ -448,7 +449,7 @@ def _schema(setup: Message) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "values": {
-                "type": "array", "minItems": 3, "maxItems": 6,
+                "type": "array", "minItems": 3, "maxItems": MAX_VALUES,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -486,7 +487,7 @@ def _schema(setup: Message) -> dict[str, Any]:
     }
     if picks:  # what each value counts, when it is a plain share of one field
         value_item = schema["properties"]["values"]["items"]
-        value_item["properties"]["counts"] = {"type": "array", "items": {"type": "string", "enum": picks}}
+        value_item["properties"]["counts"] = {"type": "array", "items": text}  # checked by usable_counts
         value_item["required"].append("counts")
     lacking = lacking_plays(setup)
     if picks and lacking:  # the game's own practice players that came with no numbers
@@ -540,8 +541,11 @@ def _prompt(setup: Message) -> str:
         "",
         f"Write {'five' if numeric else 'four'} things.",
         "",
-        "1. values: what is worth tracking about the human player. Use as few as capture what matters, "
-        "3 to 6. Each one is a habit of the player that should change what an NPC does. Each has:",
+        "1. values: what is worth tracking about the human player, 8 to 10 of them and of different "
+        "kinds: how often the player picks an option, how big a number they report is, and at least two "
+        "that only a picture of the player can answer (posture, how high the arm is, how close to the "
+        "camera, which way they face), each naming the picture to look at. Each one is a habit of the "
+        "player that should change what an NPC does. Never two values where one is the other's opposite. Each has:",
         "- name: snake_case. The value runs from 0 (never seen) to 1 (does it all the time).",
         "- about: the habit in plain words, as a spectator would say it, 5 words or fewer. It starts "
         "with a verb and names no field: write it like 'Rushes forward early', never like 'How often x is y'.",
@@ -557,6 +561,8 @@ def _prompt(setup: Message) -> str:
         "field, list those options as event.field=value. They must all come from the same event and "
         "field, and never be every option of that field. Leave counts empty for anything else: a value "
         "read from a picture, from a number field, or from more than one field.",
+        "  Every pick, in counts and in plays, is written exactly as one of: "
+        + ", ".join(f"{e}.{f}={v}" for e, f, vs in list_fields(setup) for v in vs) + ".",
         "Track what tells players of this game apart. Read the game's about text and the practice "
         "players' about lines for where players differ, and prefer those fields. Never write a value "
         "on something the description says is the same for every player: if the player stands still, "
@@ -625,7 +631,7 @@ def _values(reply: dict[str, Any], setup: Message | None = None) -> list[ValueSp
         about = shorten(str(raw.get("about") or words(name)).strip(), config.MAX_ABOUT_WORDS)
         counts = _counts(setup, raw.get("counts")) if setup is not None else None
         specs.append(ValueSpec(name=name, about=about, question=question, counts=counts))
-    return specs[:6]
+    return specs[:MAX_VALUES]
 
 
 def _plays(setup: Message, entries: list[Any]) -> dict[str, Any]:
@@ -720,6 +726,208 @@ def plain_values(setup: Message) -> list[ValueSpec]:
     ]
 
 
+# ---------------------------------------------------------------- a spread of different reads
+
+MIN_VALUES, MAX_VALUES = 8, 10   # values besides likeness
+MAX_SHARES_PER_FIELD = 2
+MAX_LABEL_WORDS = 6
+# Words in a game's description that say the player does not choose where they are.
+_FIXED_WORDS = ("fixed", "stationary", "by itself", "automatically")
+_PLACE_FIELDS = ("position", "from")
+
+
+def range_fields(setup: Message) -> list[tuple[str, str, dict[str, Any]]]:
+    """Every (event, field, spec) on a player event where the field is a number with a min and max."""
+    found = []
+    for event, spec in (setup.get("events") or {}).items():
+        if measures.is_npc_event(setup, event):
+            continue
+        for field_name, kind in ((spec or {}).get("fields") or {}).items():
+            if isinstance(kind, dict) and _is_number(kind.get("min")) and _is_number(kind.get("max")) \
+                    and kind["max"] > kind["min"]:
+                found.append((event, field_name, kind))
+    return found
+
+
+def chosen_by_player(setup: Message, field_name: str) -> bool:
+    """A field the player really chooses: not an outcome, not the NPC's side, not a place the game picks."""
+    if not measures.is_player_choice(setup, field_name):
+        return False
+    about = str(setup.get("about") or "").lower()
+    if any(word in about for word in _FIXED_WORDS) and any(place in field_name for place in _PLACE_FIELDS):
+        return False
+    return True
+
+
+def player_views(setup: Message) -> list[str]:
+    """The pictures that show the player, by name."""
+    return [str(name) for name, about in (setup.get("views") or {}).items() if "player" in str(about).lower()]
+
+
+def view_of(setup: Message, spec: ValueSpec) -> str | None:
+    """The picture a value's question names, if any."""
+    text = str(spec.question.get("instructions") or "")
+    for name in (setup.get("views") or {}):
+        if re.search(rf"\b{re.escape(str(name))}\b", text):
+            return str(name)
+    return None
+
+
+def level_value(event: str, field_name: str, spec: dict[str, Any]) -> ValueSpec:
+    middle = (float(spec["min"]) + float(spec["max"])) / 2
+    return ValueSpec(
+        name=snake(f"level_of_{field_name}"),
+        about=shorten(f"High {words(field_name)}", MAX_LABEL_WORDS),
+        question={"type": "noul", "instructions": (
+            f"Will the player's next `{event}` have `{field_name}` above {middle:g}? "
+            f"Judge by the mean of `{field_name}` in the counts.")},
+        counts={"event": event, "field": field_name, "mean": True,
+                "min": float(spec["min"]), "max": float(spec["max"])},
+        kind="level",
+    )
+
+
+def camera_values(setup: Message) -> list[ValueSpec]:
+    """Two reads only a picture of the player can answer, written from the view's name."""
+    views = player_views(setup)
+    if not views:
+        return []
+    view = views[-1]  # a view about the player alone is usually listed after the game screen
+    return [
+        ValueSpec(name=snake(f"close_to_{view}"), about="Leans in close to camera", kind="camera", question={
+            "type": "noul", "instructions": (
+                f"Look at the `{view}` picture. Is the player close to the camera, filling more than "
+                f"half of the picture's height?")}),
+        ValueSpec(name=snake(f"side_on_in_{view}"), about="Stands side-on to the camera", kind="camera", question={
+            "type": "noul", "instructions": (
+                f"Look at the `{view}` picture. Is the player turned side-on, with one shoulder much "
+                f"closer to the camera than the other?")}),
+    ]
+
+
+def shape_values(setup: Message, values: list[ValueSpec]) -> list[ValueSpec]:
+    """Check the values against the rules and fill the gaps, so a read carries a spread of kinds.
+
+    Each value gets its kind. A value that counts nothing and names no picture,
+    a share on something the player does not choose, a share that is the
+    complement of an earlier one, and a third share on one field are dropped. Then camera, level and share values are added from the
+    setup until there are at least MIN_VALUES, and at most MAX_VALUES are kept.
+    Likeness values are not touched here.
+    """
+    views = list((setup.get("views") or {}))
+    kept: list[ValueSpec] = []
+    per_field: dict[tuple[str, str], list[set[str]]] = {}
+    for spec in values:
+        if spec.name.startswith(LIKE):
+            continue
+        spec.about = shorten(spec.about, MAX_LABEL_WORDS)
+        counts = spec.counts or {}
+        if counts.get("mean"):
+            spec.kind = "level"
+        elif counts:
+            key = (counts["event"], counts["field"])
+            if not chosen_by_player(setup, key[1]):
+                continue
+            picked = set(counts.get("values") or [])
+            options = set(_field_options(setup, *key))
+            earlier = per_field.setdefault(key, [])
+            if len(earlier) >= MAX_SHARES_PER_FIELD or any(not (picked & e) and (picked | e) == options for e in earlier):
+                continue
+            earlier.append(picked)
+            spec.kind = "share"
+        elif view_of(setup, spec) and views:
+            spec.kind = "camera"
+        else:
+            continue  # counts nothing and names no picture: only a guess, so its place is filled from the setup
+        kept.append(spec)
+
+    names = {spec.name for spec in kept}
+
+    def add(spec: ValueSpec) -> None:
+        if len(kept) < MAX_VALUES and spec.name not in names:
+            kept.append(spec)
+            names.add(spec.name)
+
+    for spec in camera_values(setup)[: max(0, 2 - sum(1 for v in kept if v.kind == "camera"))]:
+        add(spec)
+    covered_fields = {(v.counts or {}).get("field") for v in kept if v.counts}
+    levels = [(e, f, k) for e, f, k in range_fields(setup) if chosen_by_player(setup, f) and f not in covered_fields]
+    shares = []
+    for event, field_name, options in list_fields(setup):
+        if measures.is_npc_event(setup, event) or not chosen_by_player(setup, field_name) or field_name in covered_fields:
+            continue
+        counts = usable_counts(setup, {"event": event, "field": field_name, "values": options[:1]})
+        if counts and all(field_name != f for _, f, _ in shares):
+            shares.append((event, field_name, counts))
+    seen_levels: set[str] = set()
+    queue: list[ValueSpec] = []
+    for event, field_name, spec in levels:
+        if field_name not in seen_levels:
+            seen_levels.add(field_name)
+            queue.append(level_value(event, field_name, spec))
+    for event, field_name, counts in shares:
+        option = counts["values"][0]
+        queue.append(ValueSpec(
+            name=snake(f"share_of_{field_name}_{option}"),
+            # The field is named, because an option such as "left" says nothing by itself.
+            about=shorten(f"{words(field_name).capitalize()}: mostly {words(option)}", MAX_LABEL_WORDS),
+            question={"type": "score", "instructions": (
+                f"Look at the counts of the player's `{counts['event']}` events. "
+                f"How often was `{field_name}` equal to `{option}`?"), "criteria": list(SCORE_LEVELS)},
+            counts=counts, kind="share",
+        ))
+    # Alternate levels and shares so the spread holds when the limit cuts the list.
+    lv = [q for q in queue if q.kind == "level"]
+    sh = [q for q in queue if q.kind == "share"]
+    for i in range(max(len(lv), len(sh))):
+        for group in (lv, sh):
+            if i < len(group) and len(kept) < MIN_VALUES + 2:
+                add(group[i])
+    return kept[:MAX_VALUES]
+
+
+def missing_main_players(setup: Message, values: list[ValueSpec], personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Practice players to add so each main option of a counted field is someone's main choice.
+
+    A main option is one some practice player gives at least a tenth of its
+    choices. An option no practice player leans on most gets a code-built
+    player who picks it about 60% of the time.
+    """
+    added: list[dict[str, Any]] = []
+    for event, field_name in counted_fields([v for v in values if v.kind == "share"]):
+        options = _field_options(setup, event, field_name)
+        said = [((p.get("plays") or {}).get(event) or {}).get(field_name) or {} for p in personas + added]
+        said = [s for s in said if s]
+        if not said or len(options) < 2:
+            continue
+        # The main options are the ones the player's own events allow (a shorter list of the same
+        # field on another player event), or else the ones some practice player leans on.
+        narrower = []
+        for other, spec in (setup.get("events") or {}).items():
+            theirs = names_of(setup, ((spec or {}).get("fields") or {}).get(field_name))
+            if theirs and set(theirs) < set(options) and not measures.is_npc_event(setup, other):
+                narrower.append(theirs)
+        if narrower:
+            main = min(narrower, key=len)
+        else:
+            main = [o for o in options if any(float(s.get(o, 0)) >= 0.25 for s in said)]
+        if len(main) > 4:
+            continue
+        tops = {max(s, key=lambda o: float(s.get(o, 0))) for s in said}
+        for option in main:
+            if option in tops:
+                continue
+            rest = round(0.4 / (len(main) - 1), 3) if len(main) > 1 else 0.0
+            shares = {o: (0.6 if o == option else (rest if o in main else 0.0)) for o in options}
+            added.append({
+                "name": snake(f"{option}_first"),
+                "about": f"Chooses {words(option)} for {words(field_name)} most of the time.",
+                "plays": {event: {field_name: shares}},
+            })
+            tops.add(option)
+    return added
+
+
 def plain_personas(setup: Message) -> list[dict[str, Any]]:
     """Practice players built in code: one that leans on each name of the most telling field, and an even one."""
     fields = list_fields(setup)
@@ -755,6 +963,7 @@ def like_values(players: dict[str, str]) -> list[ValueSpec]:
                 "criteria": dict(players),
                 "value_of": name,
             },
+            kind="likeness",
         )
         for name, about in players.items()
     ]
@@ -945,7 +1154,7 @@ class GeminiDesigner(Designer):
         """
         practice = (setup.get("practice") or {}).get("players") or {}
         scripted = {name: str((detail or {}).get("about") or name) for name, detail in practice.items()}
-        values = plain_values(setup) + like_values(scripted)
+        values = shape_values(setup, plain_values(setup)) + like_values(scripted)
         notes = [f"Tracking {len(values)} things about the player, built in code so play can start at once.",
                  "The design model's own questions follow when they land."]
         return Design(values=values, behaviour=first_behaviour(setup), notes=notes,
@@ -1055,9 +1264,10 @@ class GeminiDesigner(Designer):
         # `ready` that went out early on the code-built ones stays true.
         values = _values(reply, setup) if reply else []
         values += [spec for spec in plain_values(setup) if all(spec.name != other.name for other in values)]
-        values = without_doubles(values)
+        values = shape_values(setup, without_doubles(values))
         personas = (_personas(setup, reply) if reply else []) or copy.deepcopy(state["plain"])
         own = practice_personas(setup, reply, everyone=bool(reply))
+        personas += missing_main_players(setup, values, own + personas)
         everyone = own + personas
         fields = counted_fields(values)
         missing = missing_plays(everyone, fields) if reply else {}

@@ -740,7 +740,6 @@
         </div>
       </div>
     </div>
-    <div class="explain tight" data-step="0" style="--d: 3500ms">Tennis and the shooter run on the same code. Only the setup file differs.</div>
   </section>
 
   <!-- 8. The recorded CS:GO clip. Put csgo.mp4 (or .webm, .mov) in the media folder. It plays once, with M for sound. -->
@@ -1017,6 +1016,7 @@
         hw = mod.hardwareInput;
         hwBar.classList.add('ready');
         shareRacket();
+        watchSwings();
         paintHardware();
       }
     } catch (err) {}
@@ -1034,20 +1034,72 @@
           this.ws.send('I,' + sample.ax + ',' + sample.ay + ',' + sample.az + ',' + sample.gx + ',' + sample.gy + ',' + sample.gz + ',' + (sample.recenter ? 1 : 0));
         }
       } catch (err) {}
+      if (devOn()) {
+        devImu.push([Date.now(), sample.ax, sample.ay, sample.az, sample.gx, sample.gy, sample.gz]);
+        if (devImu.length > 400) devImu.splice(0, devImu.length - 400);
+      }
       return inner.call(this, sample, source);
     };
   }
+
+  /* ---------- Live sensor view ----------
+     dev.html, in its own window, shows what the game is reading right now: the camera
+     frame it sees, the pose it found, the racket's readings and the swings it counted.
+     This page sends all of that from the game's own input code, so the view has no
+     camera or racket connection of its own. Nothing is sent unless a view is open. */
+  const devChan = 'BroadcastChannel' in window ? new BroadcastChannel('npc-dev') : null;
+  let devSeen = 0;
+  const devImu = [];
+  const devOn = () => Date.now() - devSeen < 3000;
+  const plain = o => JSON.parse(JSON.stringify(o === undefined ? null : o));
+  function devPost(msg) { try { devChan.postMessage(msg); } catch (err) {} }
+  if (devChan) devChan.onmessage = e => { if (e.data && e.data.type === 'watching') devSeen = Date.now(); };
+  function watchSwings() {
+    if (!hw || hw.watchedByDeck) return;
+    hw.watchedByDeck = true;
+    try { hw.onSwing(evt => { if (devOn()) devPost({ type: 'swing', at: Date.now(), evt: plain(evt) }); }); } catch (err) {}
+    try { hw.onSwingStart(() => { if (devOn()) devPost({ type: 'swing-start', at: Date.now() }); }); } catch (err) {}
+  }
+  setInterval(() => {
+    if (!devChan || !devOn()) return;
+    if (!hw) { devPost({ type: 'state', at: Date.now(), game: gameLoaded ? 'loading' : 'not opened', hidden: document.hidden }); return; }
+    try {
+      const st = hw.getState(), cam = hw.webcam.getSnapshot();
+      devPost({
+        type: 'state', at: Date.now(), game: 'running', shown: gameOn, hidden: document.hidden,
+        racket: plain({ live: !!st.imuConnected, hz: st.imuHz || 0, source: st.source, device: st.deviceInfo || '',
+          calibration: st.calibration, progress: st.calibrationProgress || 0, raw: st.rawImu, gyro: st.gyro, shotType: st.shotType }),
+        arm: plain(st.arm), counting: hw.strikeWindowOpen !== false,
+        cam: { status: cam.status, error: cam.error || '', fps: cam.fps || 0, sign: hw.webcam.cameraSign === -1 ? -1 : 1,
+          points: cam.landmarks ? cam.landmarks.map(q => [+q.x.toFixed(4), +q.y.toFixed(4), +(q.visibility == null ? 1 : q.visibility).toFixed(2)]) : null },
+        imu: devImu.splice(0),
+      });
+    } catch (err) {}
+  }, 100);
+  setInterval(() => {
+    if (!devChan || !devOn() || !hw) return;
+    try { const jpg = hw.webcam.capturePlayerCamJpeg(384, 0.6); if (jpg) devPost({ type: 'frame', at: Date.now(), jpg }); } catch (err) {}
+  }, 150);
   function say(text, seconds) { hwSaid = text; hwSaidUntil = Date.now() + (seconds || 6) * 1000; paintHardware(); }
+  // The game's own header may already have racket, camera and zero controls (an IMU
+  // button that pairs the racket). When it does, ours step aside and only the USB cable
+  // fallback stays, because the game has no control for that.
+  function gameHasOwnControls() {
+    try { return [...frame.contentDocument.querySelectorAll('button')].some(b => /^IMU/.test(b.textContent.trim())); }
+    catch (err) { return false; }
+  }
   function paintHardware() {
     if (!hw) return;
     let st, cam;
     try { st = hw.getState(); cam = hw.webcam.getSnapshot(); } catch (err) { return; }
-    const live = !!st.imuConnected, wait = hwBusy === 'racket';
+    const live = !!st.imuConnected, wait = hwBusy === 'racket', own = gameHasOwnControls();
     hwRacket.className = live ? 'on' : wait ? 'busy' : '';
     hwRacket.lastElementChild.textContent = live ? 'Racket ' + Math.round(st.imuHz || 0) + ' Hz'
       : wait ? 'Pick the racket in the list' : 'Connect racket';
-    hwUsb.hidden = live || wait;
-    hwZero.hidden = !live;
+    hwRacket.hidden = own && !wait;
+    hwCam.hidden = own;
+    hwUsb.hidden = live || wait || !!hw.serialActive;   // the game already holds the cable's port
+    hwZero.hidden = own || !live;
     hwZero.className = st.calibration === 'needs_zero' ? 'call' : '';
     hwZero.textContent = st.calibration === 'zeroing' ? 'Hold still' : st.calibration === 'ready' ? 'Zero again' : 'Zero racket';
     const c = cam.status;
@@ -1055,7 +1107,7 @@
     hwCam.lastElementChild.textContent = c === 'running' ? 'Camera on' : c === 'loading' ? 'Starting camera'
       : c === 'error' ? 'Camera failed, try again' : 'Turn camera on';
     hwNote.textContent = Date.now() < hwSaidUntil ? hwSaid : '';
-    hwBar.classList.toggle('quiet', live && st.calibration === 'ready' && !hwBusy && !hwNote.textContent && c !== 'loading' && c !== 'error');
+    hwBar.classList.toggle('quiet', !hwBusy && !hwNote.textContent && (own || (live && st.calibration === 'ready' && c !== 'loading' && c !== 'error')));
   }
   setInterval(() => { if (gameOn && hw) paintHardware(); }, 400);
 
@@ -1064,6 +1116,7 @@
   hwBar.addEventListener('click', e => e.stopPropagation());
   async function connectRacket(viaUsb) {
     if (!hw || hwBusy || hw.getState().imuConnected) return;
+    if (viaUsb && hw.serialActive) return;   // one owner of the port: never open it a second time
     hwBusy = 'racket';
     paintHardware();
     let ok = false, why = '';
@@ -1072,7 +1125,7 @@
       else { const r = await hw.connectBle(); ok = !!(r && r.ok); why = (r && r.error) || ''; }
     } catch (err) { why = String((err && err.message) || err); }
     hwBusy = '';
-    if (ok) say('Racket connected. Hold it in your ready position and press Zero racket.', 9);
+    if (ok) say(gameHasOwnControls() ? 'Racket connected. Hold it in your ready position and press R to zero it.' : 'Racket connected. Hold it in your ready position and press Zero racket.', 9);
     else say(/cancel/i.test(why) || !why ? 'No racket picked.' : 'Racket: ' + why, 9);
     if (gameOn) frame.focus();
   }

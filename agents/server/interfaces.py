@@ -89,6 +89,10 @@ class MatchState:
     rounds: list[Message] = field(default_factory=list)      # every `round_end`, oldest first
     updates: list[Message] = field(default_factory=list)     # every `strategy_update` sent
     started: float = field(default_factory=time.monotonic)
+    # Seconds of actual play so far. The session keeps it current. It stands still
+    # while the game is paused or nobody is playing, so waits measured against it
+    # do not run out while people read a pause screen.
+    play_seconds: float = 0.0
     trace: Trace = _no_trace                                 # tells the viewers what just happened
 
 

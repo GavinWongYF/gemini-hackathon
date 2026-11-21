@@ -337,4 +337,8 @@ async def test_viewers_see_the_source_and_the_move_but_never_a_key(two_keys, tmp
     assert "The first key ran out of credit. Moved to the key from the repo's .env." in abouts
     import json
 
-    no_key_in(json.dumps(seen), capsys.readouterr().out)
+    # Viewer lines carry clock times, so the whole stream is checked for the keys themselves,
+    # and the words people read are checked for anything about a key, its length included.
+    stream = json.dumps(seen)
+    assert FIRST not in stream and SECOND not in stream
+    no_key_in(*abouts, capsys.readouterr().out)

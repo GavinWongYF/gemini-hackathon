@@ -27,7 +27,7 @@ ADAPTER_THINKING = os.environ.get("NPC_ADAPTER_THINKING", "low")
 # The larger loop does not wait for a round to end. The first call starts this
 # many seconds into a match, on the counts so far, and the next one starts as
 # soon as the last has landed.
-ADAPTER_FIRST_DELAY_SECONDS = float(os.environ.get("NPC_ADAPTER_FIRST_DELAY_SECONDS", "10"))
+ADAPTER_FIRST_DELAY_SECONDS = float(os.environ.get("NPC_ADAPTER_FIRST_DELAY_SECONDS", "6"))
 
 # When a look at the match ends with nothing to change, the next look waits
 # this long, so a quiet stretch does not turn into a look on every event.
@@ -108,7 +108,7 @@ NOT_A_HABIT_PREFIXES = tuple(
 )
 
 # The watcher reads the player at most this often.
-WATCH_MIN_INTERVAL_SECONDS = float(os.environ.get("NPC_WATCH_MIN_INTERVAL_SECONDS", "1"))
+WATCH_MIN_INTERVAL_SECONDS = float(os.environ.get("NPC_WATCH_MIN_INTERVAL_SECONDS", "0.3"))
 
 # Below this confidence a value is tracked but not acted on.
 MIN_CONFIDENCE = float(os.environ.get("NPC_MIN_CONFIDENCE", "0.6"))
@@ -211,3 +211,93 @@ FAIR_EASE_GAP_ROUNDS = int(os.environ.get("NPC_FAIR_EASE_GAP_ROUNDS", "2"))
 
 # A step held back only because the player just lost a round is kept ready for this long, or for 3 more played rounds.
 PENDING_STEP_SECONDS = float(os.environ.get("NPC_PENDING_STEP_SECONDS", "25"))
+
+# ---------------------------------------------------------------- pace of the two loops
+
+# While a round is being played (an event came in within WATCH_RALLY_SECONDS), fresh pictures also ask for a
+# read, once the last read started at least this long ago. So the read moves between the player's own events.
+WATCH_FRAME_INTERVAL_SECONDS = float(os.environ.get("NPC_WATCH_FRAME_INTERVAL_SECONDS", "0.6"))
+WATCH_RALLY_SECONDS = float(os.environ.get("NPC_WATCH_RALLY_SECONDS", "2"))
+# How often the server says how many reads it started and how fast they came back.
+WATCH_REPORT_SECONDS = float(os.environ.get("NPC_WATCH_REPORT_SECONDS", "10"))
+
+# The first look of the larger loop starts once the player has done this many things, or after
+# ADAPTER_FIRST_DELAY_SECONDS, whichever comes first.
+ADAPTER_FIRST_EVENTS = int(os.environ.get("NPC_ADAPTER_FIRST_EVENTS", "3"))
+# Up to this many looks can be in flight for one match. 1 means one at a time, which is the default: every
+# change stops the game, so one look for each stretch of play is enough. 2 adds a second look as a hedge.
+ADAPTER_PARALLEL = int(os.environ.get("NPC_ADAPTER_PARALLEL", "1"))
+# A second look starts only when the one in flight started at least this long ago, and there is news since.
+ADAPTER_STAGGER_SECONDS = float(os.environ.get("NPC_ADAPTER_STAGGER_SECONDS", "8"))
+# Two updates never go to the game closer together than this.
+ADAPTER_UPDATE_GAP_SECONDS = float(os.environ.get("NPC_ADAPTER_UPDATE_GAP_SECONDS", "1"))
+
+# The quick writers ask a smaller question: a shorter prompt and a shorter answer, so a look ends sooner. 0 asks the long way.
+WRITER_COMPACT = os.environ.get("NPC_WRITER_COMPACT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# A tab left open with nobody playing must not pay for reads forever. Reads started by pictures stop once no
+# player event has arrived for this long, and start again with the next player event.
+WATCH_AWAY_SECONDS = float(os.environ.get("NPC_WATCH_AWAY_SECONDS", "20"))
+
+# The step a landing may take grows with the time since the last landing that added strength: the usual
+# cap times (seconds since then / this many seconds), never under the smallest step and never over the cap.
+# The first landing of a match gets the whole cap. 0 seconds here turns the timing off.
+DOSE_SECONDS = float(os.environ.get("NPC_DOSE_SECONDS", "10"))
+DOSE_MIN_STEP = float(os.environ.get("NPC_DOSE_MIN_STEP", "0.05"))
+
+# 0 keeps the fairness dial from ever joining a change of play for a player far above the fair band.
+FAIR_DIAL_JOINS = os.environ.get("NPC_FAIR_DIAL_JOINS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# ---------------------------------------------------------------- the play clock and real updates
+
+# A match's play clock adds the time between two `event` or `round_end` messages when it is under this.
+# A longer gap is a pause, or nobody there, and adds nothing.
+PLAY_GAP_SECONDS = float(os.environ.get("NPC_PLAY_GAP_SECONDS", "3.0"))
+# After an update that changes something, the next look waits for a player event and this much play.
+# 0 starts it at the first player event after the update, so a slow look can run through the game's stop.
+ADAPTER_RESUME_PLAY_SECONDS = float(os.environ.get("NPC_ADAPTER_RESUME_PLAY_SECONDS", "0"))
+# Two updates that change something are never sent with less play than this between them. Each one stops the game.
+UPDATE_MIN_PLAY_SECONDS = float(os.environ.get("NPC_UPDATE_MIN_PLAY_SECONDS", "10"))
+# The game stops at the end of the point for every update that changes something. Set this to 0 for a game
+# that does not: then no result is dropped, and looks and updates follow the stagger alone.
+UPDATES_STOP_PLAY = os.environ.get("NPC_UPDATES_STOP_PLAY", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# The game stops and shows each real update, so its two lists are kept short. On a real update the observations
+# are built in code with their counts (at most 3 lines of 10 words) and the plan is cut to 3 lines of 8 words.
+PAUSE_LISTS = os.environ.get("NPC_PAUSE_LISTS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# A real update must be a change a person can see. A step that moves less than this share of every decision's
+# picks goes out as a holding update with the reason. 0 turns this off.
+MIN_VISIBLE_STEP = float(os.environ.get("NPC_MIN_VISIBLE_STEP", "0.03"))
+
+# 1, the default: after an update that changes something, the next look waits until the game has resumed, which
+# shows as a player event in a later round than any seen when the update went out. The game stops to show each
+# change, and no look runs while it is stopped. 0: the look starts at the first player event after the update,
+# so a slow look can work through the game's stop.
+ADAPTER_LOOK_AFTER_RESUME = os.environ.get("NPC_ADAPTER_LOOK_AFTER_RESUME", "1").strip().lower() in ("1", "true", "yes", "on")
+
+# The fair band reads the player's share of the last rounds. Above the high mark the next look adds strength,
+# under the low mark the very next look eases in code, and in between it holds. While fewer rounds than the
+# window have finished, the missing ones are filled from the table's estimate. 0 rounds goes back to the blend.
+FAIR_WINDOW_ROUNDS = int(float(os.environ.get("NPC_FAIR_WINDOW_ROUNDS", "8")))
+FAIR_LOW = float(os.environ.get("NPC_FAIR_LOW", "0.40"))
+FAIR_HIGH = float(os.environ.get("NPC_FAIR_HIGH", "0.60"))
+FAIR_HIGH_FAR = float(os.environ.get("NPC_FAIR_HIGH_FAR", "0.80"))
+# An ease takes back the latest step that added strength: half of it, or all of it under this share.
+FAIR_EASE_ALL_UNDER = float(os.environ.get("NPC_FAIR_EASE_ALL_UNDER", "0.25"))
+# The latest step is also judged alone: this few wins in at least this many rounds since it means it was too much.
+FAIR_LAST_STEP_ROUNDS = int(float(os.environ.get("NPC_FAIR_LAST_STEP_ROUNDS", "4")))
+FAIR_LAST_STEP_WINS = int(float(os.environ.get("NPC_FAIR_LAST_STEP_WINS", "1")))
+# More strength waits until this many rounds that started after the last real update have finished.
+FAIR_PROOF_ROUNDS = int(float(os.environ.get("NPC_FAIR_PROOF_ROUNDS", "2")))
+# A kept step is dropped once this many rounds that started after the last real update have finished.
+PENDING_STEP_ROUNDS = int(float(os.environ.get("NPC_PENDING_STEP_ROUNDS", "4")))
+
+# The first real update of a match must not wait for luck: it may go out once the window reads this share
+# or more and the player has sent at least 3 events. Every later step up keeps the high mark.
+FAIR_FIRST_HIGH = float(os.environ.get("NPC_FAIR_FIRST_HIGH", "0.50"))
+
+# An update is only sent on the heels of a game message: an `event` or `round_end` within this many seconds.
+# A stopped game sends neither, so a result that lands during a stop waits and goes out when play picks up
+# again. 0 turns the wait off.
+SEND_WHILE_PLAYING_SECONDS = float(os.environ.get("NPC_SEND_WHILE_PLAYING_SECONDS", "1.5"))

@@ -4,8 +4,8 @@ A session keeps the match's state, answers the game, and runs the three
 slower parts in the background so the socket loop never waits on a model:
 
     the designer  once per game, before `ready` (or after it, in a live match)
-    the watcher   at most one read in flight, paced, after player events
-    the adapter   at most one rewrite in flight, started on a clock
+    the watcher   at most one read in flight, paced, after player events and fresh pictures
+    the adapter   one or two looks in flight, staggered, their results applied in the order they started
 
 A session outlives its socket. When the game reconnects and sends `setup`
 again with the same `match_id`, it picks up where it was.
@@ -16,6 +16,7 @@ import asyncio
 import copy
 import json
 import os
+import statistics
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,32 @@ class Settings:
     practice_timeout: float = field(default_factory=lambda: float(os.environ.get("NPC_PRACTICE_TIMEOUT_SECONDS", "120")))
     read_gap: float = field(default_factory=lambda: config.WATCH_MIN_INTERVAL_SECONDS)
     first_adapt_delay: float = field(default_factory=lambda: config.ADAPTER_FIRST_DELAY_SECONDS)
+    # The first look starts once the player has done this many things, or after the delay above.
+    first_adapt_events: int = field(default_factory=lambda: config.ADAPTER_FIRST_EVENTS)
+    # In a rally, fresh pictures ask for a read once the last one started this long ago.
+    frame_gap: float = field(default_factory=lambda: config.WATCH_FRAME_INTERVAL_SECONDS)
+    rally_seconds: float = field(default_factory=lambda: config.WATCH_RALLY_SECONDS)
+    # Pictures stop starting reads once no player event has come in for this long.
+    away_seconds: float = field(default_factory=lambda: config.WATCH_AWAY_SECONDS)
+    report_every: float = field(default_factory=lambda: config.WATCH_REPORT_SECONDS)
+    # How many looks can be in flight, and how far apart they start.
+    parallel: int = field(default_factory=lambda: config.ADAPTER_PARALLEL)
+    stagger: float = field(default_factory=lambda: config.ADAPTER_STAGGER_SECONDS)
+    # After a look that changed nothing, the next one waits this long. Only when none is in flight.
+    rest: float = field(default_factory=lambda: config.ADAPTER_REST_SECONDS)
+    # Two updates never reach the game closer together than this.
+    update_gap: float = field(default_factory=lambda: config.ADAPTER_UPDATE_GAP_SECONDS)
+    # The play clock: a gap between two events longer than this is a pause and adds nothing.
+    play_gap: float = field(default_factory=lambda: config.PLAY_GAP_SECONDS)
+    # After an update that changes something: how much play before the next look, and before the next such update.
+    resume_play: float = field(default_factory=lambda: config.ADAPTER_RESUME_PLAY_SECONDS)
+    min_play: float = field(default_factory=lambda: config.UPDATE_MIN_PLAY_SECONDS)
+    # A look's result is only sent when the game spoke this recently. Otherwise it waits for the next event.
+    send_window: float = field(default_factory=lambda: config.SEND_WHILE_PLAYING_SECONDS)
+    # True: after a change, the next look waits for a player event in a later round, the sign that play resumed.
+    look_after_resume: bool = field(default_factory=lambda: config.ADAPTER_LOOK_AFTER_RESUME)
+    # False for a game that does not stop on a change: nothing is dropped or held for the play clock.
+    stop_on_change: bool = field(default_factory=lambda: config.UPDATES_STOP_PLAY)
     # How much longer than the game said it can wait a rewrite may take before it is dropped.
     patience: float = 1.25
     # The adapter keeps to the same limit itself. This much slack lets an answer that lands right on it through.
@@ -99,6 +126,24 @@ def baseline_behaviour(setup: Message) -> Behaviour:
     }
 
 
+def value_entry(value: ValueSpec) -> dict[str, Any]:
+    """How one tracked value is described to the game and the screens.
+
+    `event` and `field` say what it counts, by the names the game declared.
+    Both are left out for a value that does not count one field.
+    """
+    entry: dict[str, Any] = {"label": value.about, "kind": value.kind}
+    counts = value.counts if isinstance(value.counts, dict) else None
+    if counts and isinstance(counts.get("event"), str) and isinstance(counts.get("field"), str):
+        entry["event"], entry["field"] = counts["event"], counts["field"]
+    return entry
+
+
+def is_real(update: Any) -> bool:
+    """Does this update change anything? One that does stops the game. A holding update does not."""
+    return isinstance(update, dict) and bool(update.get("changes")) and not update.get("holding")
+
+
 class SocketPlaytest:
     """Runs practice rounds by asking the game over its own socket."""
 
@@ -149,8 +194,35 @@ class Session:
         self._watching: asyncio.Task[Any] | None = None
         self._read_wanted = False
         self._last_read = float("-inf")
+        self._last_event_at = float("-inf")      # when the game last reported an event, by anyone
+        self._reads_paused = False               # nobody has played for a while, so pictures start no reads
+        self._reads_started = 0                  # in the window the next report covers
+        self._reads_answered = 0
+        self._read_ms: list[float] = []
+        self._reporting: asyncio.Task[Any] | None = None
         # the adapter
-        self._adapting: asyncio.Task[Any] | None = None
+        self._looks: dict[int, dict[str, Any]] = {}   # start number -> a look whose result has not been applied yet
+        self._look_number = 0                    # how many looks have started
+        self._returned: dict[int, Any] = {}      # start number -> a result waiting for its turn
+        self._next_to_land = 1                   # results are applied in the order the looks started
+        self._landing = asyncio.Lock()
+        self._last_update_at = float("-inf")     # when the last update went to the game
+        self._ask_at_round_end = False           # the adapter is holding a step for the end of the next round
+        self._stagger_timer: asyncio.TimerHandle | None = None
+        # the play clock, and the updates that change something (each one stops the game)
+        self.play_seconds = 0.0                  # how long the game has really been played
+        self._last_play_at: float | None = None  # when the last `event` or `round_end` came in
+        self._play_moved = asyncio.Event()
+        self.real_updates = 0                    # how many updates with changes have been sent
+        self._last_real_play = 0.0               # the play clock at the last one, or 0 for the first event
+        self._last_real_wall: float | None = None
+        self._drop_through = 0                   # results of looks up to this number are too old to send
+        self._events_at_real: int | None = None  # player events seen when the last one went out, until play resumes
+        self._holding_real = False               # one is ready and waiting for the play clock
+        self._highest_round = 0                  # the highest round number the game has reported
+        self._player_round = 0                   # the highest round the player has done anything in
+        self._round_at_real = 0                  # the highest round seen when the last change went out
+        self._last_real_kept = False             # the last change was a step the adapter had kept ready
         self._full_wanted = False                # a break asked for a deeper rewrite
         self._player_events = 0                  # how many player events have come in
         self._adapted_on = 0                     # how many there were when the last rewrite started
@@ -418,7 +490,7 @@ class Session:
         await self.send({
             "type": "ready",
             "match_id": self.match_id,
-            "values": {value.name: {"label": value.about, "kind": value.kind} for value in match.design.values},
+            "values": {value.name: value_entry(value) for value in match.design.values},
             "behaviour": match.behaviour,
         })
 
@@ -445,7 +517,7 @@ class Session:
             "observations": design.notes[:4] or ["The design for this game is ready."],
             "plan": [plan],
             "changes": [],
-            "new_values": {value.name: {"label": value.about, "kind": value.kind} for value in design.values},
+            "new_values": {value.name: value_entry(value) for value in design.values},
             "behaviour": behaviour,
         }
         match.behaviour = behaviour
@@ -509,6 +581,13 @@ class Session:
         """One checked `event`, `frames` or `round_end` for a match that is set up."""
         assert self.match is not None
         kind = message.get("type")
+        if kind in ("event", "round_end"):
+            self._tick_play()
+            number = message.get("round")
+            if isinstance(number, (int, float)) and not isinstance(number, bool):
+                self._highest_round = max(self._highest_round, number)
+                if kind == "event" and message.get("by") == "player":
+                    self._player_round = max(self._player_round, number)
         if kind in ("event", "round_end") and self._back:
             self._back = False
             if message.get("round") == 1 and self.match.rounds:
@@ -518,11 +597,34 @@ class Session:
         elif kind == "frames":
             if isinstance(message.get("views"), dict):
                 self.match.frames = message
-                # A player who has done nothing for a while still gets read, from the pictures alone.
-                if time.monotonic() - self._last_player_at >= config.WATCH_IDLE_SECONDS:
+                now = time.monotonic()
+                quiet_for = now - self._last_player_at
+                if quiet_for >= self.settings.away_seconds:
+                    # Nobody is playing. A tab left open must not pay for reads forever.
+                    if not self._reads_paused:
+                        self._reads_paused = True
+                        self.trace(trace_message(
+                            "server", "done",
+                            f"No one has played for {self.settings.away_seconds:g} seconds, so reads are paused.",
+                        ))
+                elif quiet_for >= config.WATCH_IDLE_SECONDS:
+                    # A player who has done nothing for a little while still gets read, from the pictures alone.
+                    self._want_read()
+                elif quiet_for <= self.settings.rally_seconds and now - self._last_read >= self.settings.frame_gap:
+                    # The player is in a rally, so the pictures move the read between their own events.
                     self._want_read()
         elif kind == "round_end":
             self._on_round_end(message)
+
+    def _tick_play(self) -> None:
+        """Move the play clock. Time between two events counts as play unless the gap is a pause."""
+        now = time.monotonic()
+        if self._last_play_at is not None and now - self._last_play_at < self.settings.play_gap:
+            self.play_seconds += now - self._last_play_at
+        self._last_play_at = now
+        self._play_moved.set()   # wakes a result that is waiting for the game to speak, or for the play clock
+        if self.match is not None:
+            self.match.play_seconds = self.play_seconds   # the adapter measures its own waits in play time
 
     async def _start_over(self) -> None:
         """The game came back and is playing round 1 again: a new match under the same id.
@@ -533,11 +635,20 @@ class Session:
         """
         old = self.match
         assert old is not None and self.setup is not None
-        for task in (self._adapting, self._watching):
+        for task in [self._watching, *(look.get("task") for look in self._looks.values())]:
             if task is not None and not task.done():
                 task.cancel()
-        self._adapting = self._watching = None
+        self._watching = None
+        self._looks, self._returned = {}, {}
+        self._look_number, self._next_to_land = 0, 1
+        self._ask_at_round_end = False
+        self._adapt_not_before = 0.0
         self._full_wanted = self._read_wanted = False
+        self.play_seconds, self._last_play_at = 0.0, time.monotonic()
+        self.real_updates, self._last_real_play, self._last_real_wall = 0, 0.0, None
+        self._drop_through, self._events_at_real, self._holding_real = 0, None, False
+        self._highest_round = self._player_round = self._round_at_real = 0
+        self._last_real_kept = False
         self._player_events = self._adapted_on = 0
         self._adapted_rounds = 0
         self._last_player_at = time.monotonic()
@@ -579,12 +690,14 @@ class Session:
         if not isinstance(message.get("data") or {}, dict):
             return
         match.events.append(message)
+        self._last_event_at = time.monotonic()
         if self._play_began is None:
             self._play_began = time.monotonic()
             asyncio.get_running_loop().call_later(self.settings.first_adapt_delay + 0.01, self._maybe_adapt)
         if message.get("by") == "player":
             self._player_events += 1
             self._last_player_at = time.monotonic()
+            self._reads_paused = False
             self._want_read()
             self._maybe_adapt()
 
@@ -607,10 +720,20 @@ class Session:
             self.trace(trace_message(
                 "measures", "done",
                 f"After round {number} the player has won {share} of the rounds.{top}",
-                data=summary,
+                data={**summary, "play_seconds": round(self.play_seconds, 1)},
             ))
         if message.get("break") is True and self._break_allows_deeper():
             self._full_wanted = True
+        if self._ask_at_round_end:
+            # The adapter was holding a step for the end of a round. Look now, with no rest.
+            self._ask_at_round_end = False
+            self._adapt_not_before = 0.0
+        if self.play_seconds - self._last_real_play >= self.settings.min_play:
+            # A round just finished and the last change is old enough for another. Nothing here may delay
+            # the look: no rest after an empty look, and no wait for play to pick up after the last change.
+            self._adapt_not_before = 0.0
+            if not (self._needs_later_round() and number <= self._round_at_real):
+                self._events_at_real = None
         self._maybe_adapt()
 
     def _on_game_error(self, message: Message) -> None:
@@ -656,12 +779,17 @@ class Session:
             if wait > 0:
                 await asyncio.sleep(wait)
             self._read_wanted = False
-            self._last_read = time.monotonic()
+            began = self._last_read = time.monotonic()
+            self._reads_started += 1
+            if self._reporting is None or self._reporting.done():
+                self._reporting = self._spawn(self._report_reads())
             try:
                 read = await self.parts.watcher.read(self.match)  # type: ignore[union-attr]
             except Exception as problem:
                 self.trace(trace_message("watcher", "error", f"The watcher failed: {type(problem).__name__}: {problem}"))
                 continue
+            self._reads_answered += 1
+            self._read_ms.append((time.monotonic() - began) * 1000)
             if read is None:
                 continue
             problems = check_message(self.match.setup, read)
@@ -680,6 +808,30 @@ class Session:
                 ))
                 continue
             await self.send(read)
+
+    async def _report_reads(self) -> None:
+        """Every few seconds, say how many reads started, how many came back and how fast.
+
+        Stops after a window with no reads. The next read starts it again.
+        """
+        every = self.settings.report_every
+        while True:
+            await asyncio.sleep(every)
+            started, answered, took = self._reads_started, self._reads_answered, self._read_ms
+            self._reads_started, self._reads_answered, self._read_ms = 0, 0, []
+            if started == 0 and answered == 0:
+                return
+            median = round(statistics.median(took)) if took else None
+            speed = "" if median is None else f", median {median} ms"
+            self.trace(trace_message(
+                "server", "done",
+                f"Reads in the last {every:g} seconds: {started} started, {answered} answered{speed}.",
+                data={
+                    "window_seconds": every, "reads_started": started, "reads_answered": answered,
+                    "median_ms": median, "reads_per_second": round(answered / every, 2) if every > 0 else None,
+                    "play_seconds": round(self.play_seconds, 1),
+                },
+            ))
 
     # --------------------------------------------------------- the adapter
 
@@ -704,52 +856,97 @@ class Session:
         return depth.index(at_break) > depth.index(routine)
 
     def _maybe_adapt(self) -> None:
-        """Start the next rewrite if it is time and there is something new to go on.
+        """Start the next look if it is time and there is something new to go on.
 
-        The routine loop: the first rewrite starts a set time after play
-        begins, and each later one starts as soon as the last has landed.
-        A long break can ask for one deeper rewrite, which goes first and
-        holds the routine loop until it returns. Never two at once.
+        The first look starts once the player has done a few things, or a
+        set time after play begins. After that, up to `parallel` looks can be
+        in flight: a second one starts only when the one in flight is old
+        enough and there is news since it started. A long break can ask for
+        one deeper look, which waits for the others to land and runs alone.
         """
         if self.parts.adapter is None or not self.settings.adapt or not self.settings.larger_loop or self.match is None:
             return
-        if self._adapting is not None and not self._adapting.done():
-            return
         if self.socket is None:
             return  # the game has gone. A look now would be a paid call for nobody.
+        if any(look["source"] == "full" for look in self._looks.values()):
+            return  # a deeper look runs alone
+        if self._holding_real:
+            return  # a change is ready and goes out as soon as the play clock allows. Nothing new until then.
+        if self._events_at_real is not None:
+            # A change just stopped the game. Look again only once the player is playing on.
+            if (self._player_events <= self._events_at_real
+                    or self.play_seconds - self._last_real_play < self.settings.resume_play):
+                return
+            if self._needs_later_round() and self._player_round <= self._round_at_real:
+                return  # the game stops at the end of the point, so only a later round shows that play resumed
+            self._events_at_real = None
+        now = time.monotonic()
         if self._full_wanted:
+            if self._looks:
+                return  # it starts once the looks in flight have landed
             self._full_wanted = False
-            self._adapted_on = self._player_events
-            self._adapted_rounds = self._rounds_played()
             seconds = float(self._plan().get("break_seconds", 0))
-            self._adapting = self._spawn(self._adapt("full", self.settings.patience * seconds + self.settings.grace))
+            self._start_look("full", self.settings.patience * seconds + self.settings.grace)
             return
+        if len(self._looks) >= max(1, self.settings.parallel):
+            return
+        if self._ask_at_round_end:
+            return  # the adapter is holding a step it can only send after a round ends, so wait for that
         rounds = self._rounds_played()
         if self._player_events == self._adapted_on and rounds == self._adapted_rounds:
-            return  # no new player event and no round they played in ended since the last rewrite started
+            return  # no new player event and no round they played in ended since the last look started
         if self._player_events == 0 and rounds == 0:
             return  # nothing to go on yet
-        if self._play_began is None or time.monotonic() - self._play_began < self.settings.first_adapt_delay:
+        if not self._first_look_due(now):
             return
-        if time.monotonic() < self._adapt_not_before:
+        if self._looks:
+            wait = max(look["started"] for look in self._looks.values()) + self.settings.stagger - now
+            if wait > 0:
+                self._look_again_in(wait)
+                return
+        elif now < self._adapt_not_before:
             return  # the last look decided to wait, so give play a moment before looking again
+        self._start_look("quick", self.settings.patience * self._update_seconds() + self.settings.grace)
+
+    def _needs_later_round(self) -> bool:
+        """Must the next look wait until the player is playing a later round than the last change saw?
+
+        Always after a step the adapter had kept ready: never two kept steps
+        in a row, so the next change has to come from a look that saw this
+        one played. After any other change, the setting decides.
+        """
+        return self.settings.look_after_resume or self._last_real_kept
+
+    def _first_look_due(self, now: float) -> bool:
+        """The first look waits for a few player events, or for a set time after play began."""
+        if self._look_number > 0:
+            return True
+        if self._player_events >= self.settings.first_adapt_events:
+            return True
+        return self._play_began is not None and now - self._play_began >= self.settings.first_adapt_delay
+
+    def _look_again_in(self, seconds: float) -> None:
+        """Come back to `_maybe_adapt` when the stagger has passed. One timer at a time."""
+        loop = asyncio.get_running_loop()
+        timer = self._stagger_timer
+        if timer is not None and not timer.cancelled() and timer.when() > loop.time():
+            return
+        self._stagger_timer = loop.call_later(seconds + 0.01, self._maybe_adapt)
+
+    def _start_look(self, source: str, timeout: float) -> None:
         self._adapted_on = self._player_events
-        self._adapted_rounds = rounds
-        timeout = self.settings.patience * self._update_seconds() + self.settings.grace
-        self._adapting = self._spawn(self._adapt("quick", timeout))
+        self._adapted_rounds = self._rounds_played()
+        self._look_number += 1
+        number = self._look_number
+        self._looks[number] = {"source": source, "started": time.monotonic()}
+        self._looks[number]["task"] = self._spawn(self._adapt(number, source, timeout))
 
     def _rounds_played(self) -> int:
-        """Finished rounds in which the player did anything at all.
+        """How many rounds have finished. Every one is news, also a round lost without the player reaching the ball."""
+        return len(self.match.rounds) if self.match is not None else 0
 
-        A round with no player event is a round the player was away for. It
-        is no news about how they play, so it never starts a look on its own.
-        """
-        if self.match is None:
-            return 0
-        acted = {event.get("round") for event in self.match.events if event.get("by") == "player"}
-        return sum(1 for r in self.match.rounds if r.get("round") in acted)
-
-    async def _adapt(self, source: str, timeout: float) -> None:
+    async def _adapt(self, number: int, source: str, timeout: float) -> None:
+        """Run look `number`, then apply its result when every earlier look has had its turn."""
         match = self.match
         assert match is not None
         began = time.monotonic()
@@ -765,20 +962,123 @@ class Session:
         except Exception as problem:
             self.trace(trace_message("adapter", "error", f"The adapter failed: {type(problem).__name__}: {problem}"))
             update = None
-        if update is not None:
-            await self._send_update(update)
-        elif source == "quick":
-            self._adapt_not_before = time.monotonic() + config.ADAPTER_REST_SECONDS
+        if update is None and self._adapter_is_waiting():
+            # The adapter is keeping a step ready for after the player's next round. No rest:
+            # the next round they play in starts a look the moment it ends.
+            self._ask_at_round_end = True
+        elif update is None and source == "quick":
+            self._adapt_not_before = time.monotonic() + self.settings.rest
+        self._returned[number] = update
+        self._play_moved.set()   # a result that is waiting for play may now have a newer one behind it
+        await self._land_in_order()
         # Straight on to the next one, if the player has done anything since.
         asyncio.get_running_loop().call_soon(self._maybe_adapt)
 
-    async def _send_update(self, update: Message) -> None:
-        """Check a `strategy_update`, make its version go up, and send it."""
+    def _adapter_is_waiting(self) -> bool:
+        """Is the adapter holding a ready step for this match? An adapter without `waiting` never is."""
+        waiting = getattr(self.parts.adapter, "waiting", None)
+        if not callable(waiting):
+            return False
+        try:
+            return bool(waiting(self.match_id))
+        except Exception:
+            return False
+
+    async def _land_in_order(self) -> None:
+        """Apply the results that are ready, in the order their looks started.
+
+        A look that came back before an earlier one waits here until that one
+        has come back or failed. A result from a look that started before the
+        last change went out is dropped: it was written for the old behaviour
+        and would stop the game again. A change that is ready too soon after
+        the last one waits for the play clock. Two updates of any kind never
+        go out inside `update_gap`.
+        """
+        async with self._landing:
+            while self._next_to_land in self._returned:
+                number = self._next_to_land
+                update = self._returned.pop(number)
+                if update is not None and number <= self._drop_through:
+                    self.trace(trace_message(
+                        "server", "done", "A newer change is already in, so this one is dropped.",
+                        data={"look": number, "play_seconds": round(self.play_seconds, 1)},
+                    ))
+                    update = None
+                if update is not None:
+                    real = is_real(update)
+                    try:
+                        wait = self._last_update_at + self.settings.update_gap - time.monotonic()
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                        if not await self._wait_to_send(number, real):
+                            self.trace(trace_message(
+                                "server", "done", "A newer result is ready, so the one that was waiting for play is dropped.",
+                                data={"look": number, "play_seconds": round(self.play_seconds, 1)},
+                            ))
+                        elif await self._send_update(update) and real:
+                            self._after_real_update(update)
+                    except Exception as problem:
+                        self.trace(trace_message("adapter", "error", f"Could not apply look {number}: {type(problem).__name__}: {problem}"))
+                self._looks.pop(number, None)
+                self._next_to_land = number + 1
+
+    async def _wait_to_send(self, number: int, real: bool) -> bool:
+        """Wait until look `number`'s result may go to the game. False when a newer result replaced it.
+
+        Two things can hold it. A change waits for the play clock to reach
+        the floor since the last change. And any update waits for the game
+        to speak: a stopped game sends no `event` or `round_end`, and an
+        update sent then would go live on resume with nothing shown.
+        """
+        try:
+            while True:
+                floor_met = (not (real and self.settings.stop_on_change)
+                             or self.play_seconds >= self._last_real_play + self.settings.min_play)
+                window = self.settings.send_window
+                playing = window <= 0 or (
+                    self._last_play_at is not None and time.monotonic() - self._last_play_at <= window
+                )
+                if floor_met and playing:
+                    return True
+                if any(later > number and result is not None for later, result in self._returned.items()):
+                    return False  # it has to wait, and a newer result is already here
+                self._holding_real = not floor_met   # a change waiting for the clock keeps new looks from starting
+                self._play_moved.clear()
+                await self._play_moved.wait()
+        finally:
+            self._holding_real = False
+
+    def _after_real_update(self, update: Message) -> None:
+        """A change just went to the game, which stops play. Start the count to the next one."""
+        now = time.monotonic()
+        since_wall = now - (self._last_real_wall if self._last_real_wall is not None else self._play_began or now)
+        since_play = self.play_seconds - self._last_real_play
+        self.real_updates += 1
+        self._last_real_play, self._last_real_wall = self.play_seconds, now
+        if self.settings.stop_on_change:
+            self._drop_through = self._look_number     # every look started so far was written for the old behaviour
+            self._events_at_real = self._player_events
+            self._round_at_real = self._highest_round
+            self._last_real_kept = bool(update.get("kept"))
+            self._adapt_not_before = 0.0
+        self.trace(trace_message(
+            "server", "done",
+            f"Change {self.real_updates} went out after {since_play:.0f} seconds of play.",
+            data={
+                "play_seconds_since_last_change": round(since_play, 1),
+                "wall_seconds_since_last_change": round(since_wall, 1),
+                "real_updates": self.real_updates,
+                "play_seconds": round(self.play_seconds, 1),
+            },
+        ))
+
+    async def _send_update(self, update: Message) -> bool:
+        """Check a `strategy_update`, make its version go up, and send it. False when it was held back."""
         match = self.match
         assert match is not None
         if not isinstance(update, dict) or not isinstance(update.get("behaviour"), dict):
             self.trace(trace_message("adapter", "error", "Held back an update with no behaviour in it."))
-            return
+            return False
         update = {"match_id": self.match_id, **update, "type": "strategy_update"}
         current = match.behaviour.get("version", 0)
         version = update.get("version")
@@ -798,12 +1098,19 @@ class Session:
                 f"Held back an update that does not fit the contract: {problems[0]['about']}",
                 data={"problems": problems},
             ))
-            return
+            return False
 
         tracked = set(self._value_names())
         for name, spec in new_values.items():
             if name not in tracked:
                 match.design.values.append(ValueSpec(name=name, about=spec.get("label", name), question=spec.get("question", {})))
+        known = {value.name: value for value in match.design.values if value.counts}
+        if any(name in known for name in new_values):
+            update["new_values"] = {
+                name: {**value_entry(known[name]), **spec} if name in known else spec for name, spec in new_values.items()
+            }
         match.behaviour = update["behaviour"]
         match.updates.append(update)
+        self._last_update_at = time.monotonic()
         await self.send(update)
+        return True

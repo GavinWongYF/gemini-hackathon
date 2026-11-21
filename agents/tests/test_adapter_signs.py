@@ -21,12 +21,17 @@ def counts_alone(monkeypatch):
     """These tests check the early signs on plain counts: no table weight in the fair band, no holding
     updates, no wait for a won round and no code-built step up."""
     monkeypatch.setattr(config, "FAIR_BLEND_ROUNDS", 0.0)
+    monkeypatch.setattr(config, "FAIR_WINDOW_ROUNDS", 0)      # the band as it was: one count over the whole match
     monkeypatch.setattr(config, "SEND_HOLDING_UPDATES", False)
     monkeypatch.setattr(config, "ADD_ONLY_AFTER_WIN", False)
     monkeypatch.setattr(config, "DOSE_STEP", 0.0)
     monkeypatch.setattr(config, "DOSE_MAX_STEP", 1.0)
     monkeypatch.setattr(config, "MIN_UPDATE_GAP_SECONDS", 0.0)
     monkeypatch.setattr(config, "FAIR_EASE_GAP_ROUNDS", 0)
+    monkeypatch.setattr(config, "WRITER_COMPACT", False)       # these tests read the long prompt
+    monkeypatch.setattr(config, "PAUSE_LISTS", False)
+    monkeypatch.setattr(config, "MIN_VISIBLE_STEP", 0.0)
+    monkeypatch.setattr(config, "DOSE_SECONDS", 0.0)
 
 
 def pitch() -> dict[str, Any]:

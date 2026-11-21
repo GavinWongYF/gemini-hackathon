@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live sensor view</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400;500&display=swap" rel="stylesheet">
+<!--
+  Live sensor view. For developers, not for the demo.
+
+  It shows what the game in the slides is reading right now: the camera frame it sees,
+  the pose it found, the racket's readings and the swings it counted. All of it comes
+  from the slide page, which reads the game's own input code. This page opens no camera
+  and connects no racket. Connect those once, in the game view of the slides.
+
+  Keep this page in its own window beside the slides. A browser pauses a page whose tab
+  is hidden, so if the slides tab is covered, the game and this view both stop.
+
+  It listens to the slides at http://localhost:8766. Add ?deck=http://localhost:PORT to change that.
+-->
+<style>
+  :root {
+    --bg: #0b0b0c; --panel: #131415; --line: #26282b; --ink: #e8eaed; --ink-2: #b4b8be; --ink-3: #7d828a;
+    --ok: #34a853; --warn: #fbbc04; --bad: #ea4335; --accel: #8ab4f8; --gyro: #f28b82;
+    --font: "Google Sans Flex", "Google Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font: 400 14px/1.4 var(--font); -webkit-font-smoothing: antialiased; }
+  body { display: grid; grid-template-rows: auto 1fr; gap: 14px; padding: 16px 18px 18px; }
+  header { display: flex; align-items: center; gap: 14px; }
+  h1 { margin: 0; font-size: 17px; font-weight: 500; letter-spacing: -0.01em; }
+  .link { margin-left: auto; color: var(--ink-3); font-size: 13px; }
+  .state { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a4d52; flex: none; }
+  .ok .dot { background: var(--ok); } .warn .dot { background: var(--warn); } .bad .dot { background: var(--bad); }
+  main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; min-height: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-height: 0; display: flex; flex-direction: column; }
+  .right { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 14px; min-height: 0; }
+  h2 { margin: 0 0 10px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 10px; }
+  h2 .state { margin-left: auto; }
+  .camwrap { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  #cam { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--ink-3); }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; color: var(--ink-2); font-size: 13px; }
+  .facts b, .nums b { font: 500 13px/1.3 var(--mono); color: var(--ink); }
+  .facts span span, .nums span { color: var(--ink-3); }
+  #chart { width: 100%; height: 120px; display: block; margin: 4px 0 8px; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; }
+  .nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 14px; font-size: 12px; }
+  .nums div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  #log { flex: 1; min-height: 0; overflow: auto; font: 400 12px/1.5 var(--mono); color: var(--ink-2); }
+  #log .row { display: grid; grid-template-columns: 62px 1fr auto; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  #log .row b { color: var(--ink); font-weight: 500; }
+  #log .none { color: var(--ink-3); font-family: var(--font); font-size: 13px; padding: 6px 0; }
+  .flash { animation: flash 0.6s ease-out; }
+  @keyframes flash { from { background: rgba(138, 180, 248, 0.22); } to { background: transparent; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Live sensor view</h1>
+  <span class="state" id="link"><i class="dot"></i><span>Looking for the slides</span></span>
+  <span class="link">Reads the game in the slides. Nothing to connect here.</span>
+</header>
+<main>
+  <section>
+    <h2>What the game's camera sees <span class="state" id="camState"><i class="dot"></i><span>No camera yet</span></span></h2>
+    <div class="camwrap">
+      <canvas id="cam" width="384" height="288"></canvas>
+      <div class="empty" id="camEmpty">Waiting for a frame from the game.</div>
+    </div>
+    <div class="facts" id="camFacts"></div>
+  </section>
+  <div class="right">
+    <section>
+      <h2>Racket <span class="state" id="racketState"><i class="dot"></i><span>No readings</span></span></h2>
+      <canvas id="chart"></canvas>
+      <div class="legend"><span><i style="background: var(--accel)"></i>Acceleration, g</span><span><i style="background: var(--gyro)"></i>Turn rate, deg/s</span><span id="span"></span></div>
+      <div class="nums" id="nums"></div>
+    </section>
+    <section>
+      <h2>Swings the game counted <span class="state" id="countState"><i class="dot"></i><span></span></span></h2>
+      <div id="log"><div class="none">None yet.</div></div>
+    </section>
+  </div>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const DECK = (params.get('deck') || 'http://localhost:8766').replace(/\/$/, '');
+  const $ = id => document.getElementById(id);
+  const set = (el, cls, text) => { el.className = 'state ' + cls; el.lastElementChild.textContent = text; };
+
+  // ---- listen to the slide page ----
+  let send = () => {};
+  if (location.origin === DECK) {
+    const ch = new BroadcastChannel('npc-dev');
+    ch.onmessage = e => handle(e.data);
+    send = m => ch.postMessage(m);
+  } else {
+    // On another address, a hidden page from the slides' address passes the messages across.
+    const f = document.createElement('iframe');
+    f.src = DECK + '/deck/dev-bridge.html';
+    f.style.cssText = 'position:absolute;width:0;height:0;border:0;';
+    document.body.appendChild(f);
+    addEventListener('message', e => { if (e.origin === DECK) handle(e.data); });
+    send = m => { try { f.contentWindow.postMessage(m, DECK); } catch (err) {} };
+  }
+  setInterval(() => send({ type: 'watching' }), 1000);
+  send({ type: 'watching' });
+
+  // ---- what we know ----
+  let state = null, stateAt = 0, frameAt = 0, img = null, swings = [], lastStart = 0;
+  const samples = [];            // [time, |accel| g, |gyro| deg/s]
+  const SPAN = 8000;             // the chart shows the last 8 seconds
+
+  function handle(m) {
+    if (!m || !m.type) return;
+    if (m.type === 'state') {
+      state = m; stateAt = Date.now();
+      for (const r of (m.imu || [])) samples.push([r[0], Math.hypot(r[1], r[2], r[3]), Math.hypot(r[4], r[5], r[6])]);
+      const cut = Date.now() - SPAN - 500;
+      while (samples.length && samples[0][0] < cut) samples.shift();
+    } else if (m.type === 'frame') {
+      const im = new Image();
+      im.onload = () => { img = im; frameAt = Date.now(); };
+      im.src = m.jpg.startsWith('data:') ? m.jpg : 'data:image/jpeg;base64,' + m.jpg;
+    } else if (m.type === 'swing') {
+      swings.unshift({ at: m.at, evt: m.evt });
+      swings = swings.slice(0, 30);
+      paintLog(true);
+    } else if (m.type === 'swing-start') lastStart = m.at;
+  }
+
+  // ---- camera with the pose the game found ----
+  const cam = $('cam'), cx = cam.getContext('2d');
+  const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [24, 26], [25, 27], [26, 28]];
+  function paintCam() {
+    const fresh = img && Date.now() - frameAt < 2500;
+    $('camEmpty').style.display = fresh ? 'none' : 'flex';
+    if (!fresh) { cx.clearRect(0, 0, cam.width, cam.height); return; }
+    if (cam.width !== img.naturalWidth || cam.height !== img.naturalHeight) { cam.width = img.naturalWidth; cam.height = img.naturalHeight; }
+    cx.drawImage(img, 0, 0);
+    const c = state && state.cam;
+    if (!c || !c.points) return;
+    const X = q => (c.sign === -1 ? 1 - q[0] : q[0]) * cam.width, Y = q => q[1] * cam.height;
+    cx.lineWidth = 2; cx.strokeStyle = 'rgba(138, 180, 248, 0.9)';
+    for (const [a, b] of BONES) {
+      const p = c.points[a], q = c.points[b];
+      if (!p || !q || p[2] < 0.3 || q[2] < 0.3) continue;
+      cx.beginPath(); cx.moveTo(X(p), Y(p)); cx.lineTo(X(q), Y(q)); cx.stroke();
+    }
+    cx.fillStyle = '#fff';
+    for (const i of [11, 12, 13, 14, 15, 16, 23, 24]) {
+      const p = c.points[i];
+      if (!p || p[2] < 0.3) continue;
+      cx.beginPath(); cx.arc(X(p), Y(p), 3, 0, Math.PI * 2); cx.fill();
+    }
+  }
+
+  // ---- racket chart ----
+  const chart = $('chart'), kx = chart.getContext('2d');
+  function paintChart() {
+    const dpr = Math.min(devicePixelRatio || 1, 2), w = chart.clientWidth, h = chart.clientHeight;
+    if (chart.width !== Math.round(w * dpr)) { chart.width = Math.round(w * dpr); chart.height = Math.round(h * dpr); }
+    kx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    kx.clearRect(0, 0, w, h);
+    kx.strokeStyle = '#26282b'; kx.lineWidth = 1;
+    for (const f of [0.25, 0.5, 0.75]) { kx.beginPath(); kx.moveTo(0, h * f); kx.lineTo(w, h * f); kx.stroke(); }
+    const now = Date.now();
+    let topA = 2, topG = 300;
+    for (const s of samples) { if (s[1] > topA) topA = s[1]; if (s[2] > topG) topG = s[2]; }
+    $('span').textContent = 'Last 8 s. Top of chart: ' + topA.toFixed(1) + ' g, ' + Math.round(topG) + ' deg/s';
+    const line = (k, top, color) => {
+      kx.strokeStyle = color; kx.lineWidth = 1.5; kx.beginPath();
+      let on = false;
+      for (const s of samples) {
+        const x = w - (now - s[0]) / SPAN * w, y = h - 2 - Math.min(1, s[k] / top) * (h - 6);
+        if (x < 0) continue;
+        if (on) kx.lineTo(x, y); else { kx.moveTo(x, y); on = true; }
+      }
+      kx.stroke();
+    };
+    line(2, topG, '#f28b82');
+    line(1, topA, '#8ab4f8');
+  }
+
+  // ---- words and numbers ----
+  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '-');
+  const HOW = { m5_ble: 'Bluetooth', m5_serial: 'USB cable', m5_ws: 'bridge', keyboard: 'keyboard' };
+  function paintWords() {
+    const age = Date.now() - stateAt;
+    if (!state || age > 4000) {
+      set($('link'), state ? 'bad' : '', state ? 'Lost the slides. Is the slides tab still open?' : 'Waiting for the slides. Open them at ' + DECK.replace('http://', '') + ' and press G.');
+      set($('camState'), '', 'No camera yet'); set($('racketState'), '', 'No readings'); set($('countState'), '', '');
+      $('camFacts').innerHTML = ''; $('nums').innerHTML = '';
+      return;
+    }
+    if (state.game !== 'running') {
+      set($('link'), 'warn', state.game === 'loading' ? 'The game is loading in the slides.' : 'Slides found. Press G in the slides to start the game.');
+      return;
+    }
+    if (state.hidden) set($('link'), 'warn', 'The slides tab is hidden, so the game has paused. Keep its window visible.');
+    else set($('link'), 'ok', 'Following the game in the slides' + (state.shown ? '' : ' (slides are showing, game runs behind them)'));
+
+    const c = state.cam, a = state.arm || {};
+    const person = !!(c.points && c.points.length);
+    if (c.status === 'running') set($('camState'), person ? 'ok' : 'warn', person ? 'Person found, ' + Math.round(c.fps) + ' frames a second' : 'Camera on, nobody found');
+    else if (c.status === 'loading') set($('camState'), 'warn', 'Camera starting');
+    else if (c.status === 'error') set($('camState'), 'bad', 'Camera failed: ' + c.error);
+    else set($('camState'), '', 'Camera off. Turn it on in the game view.');
+    $('camFacts').innerHTML = c.status === 'running'
+      ? '<span><span>Arm side </span><b>' + (a.active ? (a.armZone || '-') : 'not tracked') + '</b></span>'
+        + '<span><span>Stroke side </span><b>' + (a.wing || '-') + '</b></span>'
+        + '<span><span>Arm position </span><b>' + num(a.armX, 2) + '</b></span>'
+        + '<span><span>Playing hand </span><b>' + (a.handedness || '-') + '</b></span>'
+        + '<span><span>Picture age </span><b>' + (img ? ((Date.now() - frameAt) / 1000).toFixed(1) + ' s' : '-') + '</b></span>'
+      : '';
+
+    const r = state.racket, g = r.gyro || {}, raw = r.raw || {};
+    if (r.live) {
+      const cal = r.calibration === 'ready' ? 'zeroed' : r.calibration === 'zeroing' ? 'zeroing ' + Math.round(r.progress * 100) + '%' : 'needs zeroing';
+      set($('racketState'), r.calibration === 'ready' ? 'ok' : 'warn', Math.round(r.hz) + ' readings a second by ' + (HOW[r.source] || r.source) + ', ' + cal);
+    } else set($('racketState'), '', 'No racket readings. The game is on ' + (HOW[r.source] || r.source) + '.');
+    const cell = (k, v) => '<div><span>' + k + '</span><b>' + v + '</b></div>';
+    $('nums').innerHTML = cell('Accel x', num(raw.ax, 2)) + cell('Accel y', num(raw.ay, 2)) + cell('Accel z', num(raw.az, 2))
+      + cell('Turn x', num(raw.gx, 0)) + cell('Turn y', num(raw.gy, 0)) + cell('Turn z', num(raw.gz, 0))
+      + cell('Swing energy', num(g.power, 2)) + cell('Aim', num(g.angle, 2)) + cell('Spin', num(g.rotation, 2));
+    set($('countState'), state.counting ? 'ok' : '', state.counting ? 'Counting swings now' : 'Not counting (no ball on its way)');
+  }
+  function paintLog(flash) {
+    const el = $('log');
+    if (!swings.length) { el.innerHTML = '<div class="none">None yet.</div>'; return; }
+    el.innerHTML = swings.map((s, i) => {
+      const e = s.evt || {}, t = new Date(s.at).toTimeString().slice(0, 8);
+      return '<div class="row' + (flash && i === 0 ? ' flash' : '') + '"><span>' + t + '</span>'
+        + '<span><b>' + String(e.wing || '').toUpperCase() + ' ' + String(e.shotType || '').toUpperCase() + '</b>  power ' + Math.round((e.power || 0) * 100) + '%'
+        + (e.confidence != null ? ', sure ' + Math.round(e.confidence * 100) + '%' : '') + ', peak ' + num(e.peakAccelG, 1) + ' g, ' + num(e.peakGyroDps, 0) + ' deg/s</span>'
+        + '<span>' + (HOW[e.source] || e.source || '') + '</span></div>';
+    }).join('');
+  }
+
+  (function tick() { paintCam(); paintChart(); requestAnimationFrame(tick); })();
+  setInterval(paintWords, 200);
+  paintWords();
+})();
+</script>
+</body>
+</html>

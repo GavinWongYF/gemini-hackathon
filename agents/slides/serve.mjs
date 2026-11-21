@@ -17,6 +17,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.join(here, 'web');
 const ADDRESS_FILE = path.join(here, 'game-address.txt');
 const port = Number(process.argv[2] || process.env.PORT || 8766);
+// Started with the word "sensor" after the port, the front address opens the live sensor view.
+const SENSOR_HOME = process.argv[3] === 'sensor';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -58,6 +60,7 @@ function serveDeck(req, res, rel) {
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://x').pathname;
   if (pathname === '/deck') { res.writeHead(302, { location: '/deck/' }).end(); return; }
+  if (SENSOR_HOME && pathname === '/') { res.writeHead(302, { location: '/deck/dev.html' }).end(); return; }
   if (pathname.startsWith('/deck/')) { serveDeck(req, res, pathname.slice('/deck/'.length)); return; }
   const g = game();
   const up = http.request({

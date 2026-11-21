@@ -10,17 +10,18 @@ A new game is one JSON file. These two games use the same messages, the same `pi
 | `game` | `tennis` | `csgo` |
 | A round | One point | One round |
 | `npcs` | `opponent`, one AI player | `enemies`, a squad that shares one behaviour |
-| `decisions` | `shot_type`, `aim` and `position`, on every shot | `formation` at the start, `on_contact` when the player is seen, `on_gunfire` when shots are heard |
-| `lists` | `zone`, `shot_type`, `player_shot_type`, `arm_zone` | `place`, `weapon` |
-| `events` | `shot` | `round_start`, `entered`, `spotted`, `kill` |
-| `facts` | `player_position`, `player_last_side`, `player_last_shot_type`, `player_arm_zone`, `rally_length` | `player_last_seen`, `enemies_alive`, `seconds_into_round` |
+| `decisions` | `shot_type`, `aim` and `position` on every shot, and `anticipate` the moment the player starts a swing | `formation` at the start, `on_contact` when the player is seen, `on_gunfire` when shots are heard |
+| `lists` | `zone`, `human_shot_type`, `ai_shot_type`, `arm_zone` | `place`, `weapon` |
+| `events` | `swing_start` (the early sign), `anticipate`, `shot`, `missed_swing` | `round_start`, `entered`, `spotted`, `kill` |
+| `facts` | `player_position`, `player_arm_zone`, `player_last_side`, `player_last_shot_type`, `rally_length`, and the `swing_*` facts from the early sign | `player_last_seen`, `enemies_alive`, `seconds_into_round` |
 | `views` | `court`, `player_cam` | `screen`, `player_cam` |
 | `settings` | `opponent_speed` | `enemy_count`, `loadout`, `extra_cover` |
 | `plan` | Open-ended: no fixed number of points and no breaks, `update_seconds` 20 | 4 rounds, one 150 second break after round 2, `update_seconds` 8 |
+| `practice` | Three scripted players: `forehand_lover`, `baseline_grinder`, `even` | none |
 | `default_behaviour` | sent, so the agent side starts from it | left out, so the agent side writes the first one |
 | `goal` | Start beatable, then take away the player's habits one at a time until points are about even | Make every round close |
 
-The `plan` row is what sets how deep the updates go. The same server gives the 90 second tennis match one quick model call per update. It gives CS:GO fast calls between rounds, and at the long break a managed agent that writes several rule sets and tests them before answering. Nothing else in the two files asks for that difference.
+The `plan` row is what sets how deep the updates go. The same server gives the open-ended tennis match one quick model call per update. It gives CS:GO fast calls between rounds, and at the long break a managed agent that writes several rule sets and tests them before answering. Nothing else in the two files asks for that difference.
 
 To add a third game, write the same fields for it:
 

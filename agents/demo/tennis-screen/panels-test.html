@@ -8,15 +8,24 @@
     A stand-in for the game's live view: three columns, with the middle one left empty.
     The side columns are styled like the game's slots and load panels.js the way the game does.
 
-    Plain address            the panels listen to the live stream on this server
+    Plain address            a made-up match that plays by itself, starting on the pause screen
+    ?pause=0                 the same, starting in play
+    ?auto=1                  pause by itself each time an update lands, as the game will
+    ?plain=1                 the made-up updates carry only observations and plan, as the server sends today
+    ?live=1                  the panels listen to the live stream on this server
     ?replay=file&speed=4     play a recorded stream instead, four times as fast
     ?replay=file&at=45       jump to 45 seconds into the recording and stay there
-    ?width=260               the width of each side column in pixels
-    ?light=1                 white side columns, like the game's live view
+    ?width=260               the width of each side column in play, in pixels
+    ?dark=1                  dark side columns
+    ?narrow=1                the side columns keep their play width during the pause
+
+    P pauses and continues. Enter or Space continues. While paused the columns are 30 / 40 / 30
+    and both panels carry the paused attribute, which is all the game has to set.
   -->
   <style>
     html, body { height: 100%; margin: 0; background: #020617; }
-    .live { display: grid; grid-template-columns: var(--side, 260px) minmax(0, 1fr) var(--side, 260px); height: 100%; }
+    .live { display: grid; grid-template-columns: var(--side, clamp(236px, 18.5vw, 276px)) minmax(0, 1fr) var(--side, clamp(236px, 18.5vw, 276px)); height: 100%; }
+    .live.paused { grid-template-columns: 30% 40% 30%; }
     aside {
       background: #0b1120;
       padding: 0;   /* the panel brings its own padding */
@@ -24,50 +33,214 @@
       color: #e2e8f0;
       font-family: system-ui, -apple-system, sans-serif;
     }
-    .light aside { background: #ffffff; color: #141413; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .light aside { background: #ffffff; color: #141413; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; --npc-accent: #1e3a8a; }
     .light aside:first-child { border-right: 1px solid #e5e4df; }
     .light aside:last-child { border-left: 1px solid #e5e4df; }
-    main { display: grid; place-items: center; color: #334155; font: 13px system-ui, -apple-system, sans-serif; }
+    main { position: relative; display: grid; place-items: center; color: #64748b; font: 14px system-ui, -apple-system, sans-serif; text-align: center; }
+    .light main { background: #eef0f2; }
+    main p { margin: 0; max-width: 30ch; line-height: 1.45; }
+    .bar { position: absolute; left: 0; right: 0; bottom: 28px; display: grid; justify-items: center; gap: 10px; }
+    .bar button { font: 600 16px/1 system-ui, -apple-system, sans-serif; padding: 13px 22px; border-radius: 10px; border: 1px solid #1e3a8a; background: #ffffff; color: #1e3a8a; cursor: pointer; }
+    .bar button.on { background: #1e3a8a; color: #ffffff; }
+    .bar span { font-size: 12px; color: #64748b; }
   </style>
   <script type="module" src="panels.js" async></script>
 </head>
 <body>
-  <div class="live">
+  <div class="live light">
     <aside><npc-panel side="left"></npc-panel></aside>
-    <main id="middle">The game plays here.</main>
+    <main>
+      <p id="middle">The game plays here.</p>
+      <div class="bar"><button id="toggle" type="button">Pause on the update</button><span>P pauses. Enter continues.</span></div>
+    </main>
     <aside><npc-panel side="right"></npc-panel></aside>
   </div>
 
   <script>
     (function () {
       var params = new URLSearchParams(location.search);
+      var page = document.querySelector(".live");
       var width = parseInt(params.get("width"), 10);
-      if (width > 0) document.querySelector(".live").style.setProperty("--side", width + "px");
-      if (params.get("light") === "1") document.querySelector(".live").classList.add("light");
+      if (width > 0) page.style.setProperty("--side", width + "px");
+      if (params.get("dark") === "1") page.classList.remove("light");
+
+      /* ---- the pause, as the game will do it: an attribute on both panels, and wider side columns ---- */
+      var paused = false;
+      function setPaused(on) {
+        paused = on;
+        page.classList.toggle("paused", on && params.get("narrow") !== "1");
+        document.querySelectorAll("npc-panel").forEach(function (panel) {
+          if (on) panel.setAttribute("paused", ""); else panel.removeAttribute("paused");
+        });
+        document.getElementById("toggle").textContent = on ? "Continue" : "Pause on the update";
+        document.getElementById("toggle").classList.toggle("on", on);
+        document.getElementById("middle").textContent = on ? "The court stays here, with the last shots drawn as arcs. Green for points you won, red for points you lost." : "The game plays here.";
+      }
+      document.getElementById("toggle").addEventListener("click", function (event) { setPaused(!paused); event.currentTarget.blur(); });
+      addEventListener("keydown", function (event) {
+        if (event.key === "p" || event.key === "P") setPaused(!paused);
+        else if (paused && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPaused(false); }
+      });
 
       var file = params.get("replay");
-      if (!file) return;
-      var speed = parseFloat(params.get("speed")) || 1;
-      var at = params.get("at") == null ? null : parseFloat(params.get("at"));
+      if (params.get("live") === "1") return;
+
+      /* ---- a recorded stream ---- */
+      if (file) {
+        var speed = parseFloat(params.get("speed")) || 1;
+        var at = params.get("at") == null ? null : parseFloat(params.get("at"));
+        customElements.whenDefined("npc-panel").then(function () {
+          var panels = window.NpcPanels;
+          panels.manual();
+          return fetch(file).then(function (answer) { return answer.text(); }).then(function (text) {
+            var lines = text.split("\n").map(function (row) {
+              try { return JSON.parse(row); } catch (error) { return null; }
+            }).filter(Boolean);
+            if (at != null) {
+              lines.forEach(function (line) { if ((line.t || 0) <= at) panels.feed(line); });
+              return;
+            }
+            var began = performance.now(), i = 0;
+            (function step() {
+              var now = (performance.now() - began) / 1000 * speed;
+              while (i < lines.length && (lines[i].t || 0) <= now) panels.feed(lines[i++]);
+              if (i < lines.length) setTimeout(step, 50);
+            })();
+          });
+        });
+        return;
+      }
+
+      /* ---- a made-up match that plays by itself ---- */
+      var plain = params.get("plain") === "1";
+      var auto = params.get("auto") === "1";
+      /* shapes as the server sends them: values carry label, kind, event and field. Updates carry
+         seen (text, event, field, value, count, of) and changing (text, where). */
+      var VALUES = {
+        relies_on_topspin: { label: "Hits topspin", kind: "share", event: "shot", field: "shot_type" },
+        uses_slice: { label: "Hits slice", kind: "share", event: "shot", field: "shot_type" },
+        favors_forehand: { label: "Swings forehand", kind: "share", event: "shot", field: "side" },
+        lands_right_short: { label: "Lands it right and short", kind: "share", event: "shot", field: "lands" },
+        lands_deep: { label: "Lands it deep", kind: "share", event: "shot", field: "lands" },
+        backswing_tell: { label: "Backswing gives the shot away", kind: "level", event: "swing_start", field: "backswing" },
+        full_power: { label: "Swings at full power", kind: "level", event: "shot", field: "power" },
+        arm_drops: { label: "Arm drops before a dropshot", kind: "camera" },
+        leans_early: { label: "Leans before the ball leaves", kind: "camera" },
+        like_forehand_lover: { label: "Plays like the forehand lover", kind: "likeness" }
+      };
+      var START = { relies_on_topspin: 0.8, uses_slice: 0.12, favors_forehand: 0.7, lands_right_short: 0.6, lands_deep: 0.3,
+        backswing_tell: 0.9, full_power: 0.85, arm_drops: 0.55, leans_early: 0.4, like_forehand_lover: 0.62 };
+      var UPDATES = [
+        {
+          seen: [
+            { text: "You picked topspin on 8 of your 10 shots.", event: "shot", field: "shot_type", value: "topspin", count: 8, of: 10 },
+            { text: "You picked forehand on 7 of your 10 shots.", event: "shot", field: "side", value: "forehand", count: 7, of: 10 },
+            { text: "Your backswing gave the shot away on 9 of 10.", event: "swing_start", field: "backswing" }
+          ],
+          changing: [
+            { text: "More slice to your backhand.", where: "opponent.shot_type" },
+            { text: "I move before you finish the swing.", where: "opponent.anticipate" },
+            { text: "I raise opponent speed a step, because you win 80% of points.", where: "settings.opponent_speed" }
+          ],
+          pull: { value: "relies_on_topspin", decision: "shot_type", option: "slice" },
+          drift: { relies_on_topspin: 0.62, uses_slice: 0.3 }
+        },
+        {
+          seen: [
+            { text: "You picked right short on 6 of your 10 shots.", event: "shot", field: "lands", value: "right_short", count: 6, of: 10 },
+            { text: "You swung at full power on 9 of 10.", event: "shot", field: "power" },
+            { text: "You picked middle deep on 10 of your 10 shots.", event: "shot", field: "from", value: "middle_deep", count: 10, of: 10 }
+          ],
+          changing: [
+            { text: "I stand in closer for the short ball.", where: "opponent.position" },
+            { text: "Flat and deep when your arm drops.", where: "opponent.rules" }
+          ],
+          pull: { value: "lands_right_short", decision: "position", option: "net" },
+          drift: { lands_right_short: 0.35, lands_deep: 0.55, full_power: 0.7 }
+        },
+        {
+          ease: true,
+          seen: [
+            { text: "You have won 2 of the last 8 points.", event: "round_end", field: "round_end" },
+            { text: "You picked slice on 5 of your 10 shots.", event: "shot", field: "shot_type", value: "slice", count: 5, of: 10 }
+          ],
+          changing: [
+            { text: "That was too much, I am backing off the short balls.", where: "opponent.shot_type" },
+            { text: "I lower opponent speed a step, because you win 25% of points.", where: "settings.opponent_speed" }
+          ],
+          pull: { value: "uses_slice", decision: "shot_type", option: "dropshot" },
+          drift: { uses_slice: 0.5, relies_on_topspin: 0.4, favors_forehand: 0.5 }
+        }
+      ];
 
       customElements.whenDefined("npc-panel").then(function () {
         var panels = window.NpcPanels;
         panels.manual();
-        return fetch(file).then(function (answer) { return answer.text(); }).then(function (text) {
-          var lines = text.split("\n").map(function (row) {
-            try { return JSON.parse(row); } catch (error) { return null; }
-          }).filter(Boolean);
-          if (at != null) {
-            lines.forEach(function (line) { if ((line.t || 0) <= at) panels.feed(line); });
-            return;
+        var t = 0, round = 0, version = 1, events = 0, next = 0, seed = 7;
+        var values = Object.assign({}, START), goal = Object.assign({}, START);
+        function rand() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+        function send(message) { message.match_id = "sample"; panels.feed({ t: t, match: "sample", message: message }); }
+        function behaviour(pull) {
+          var decisions = {};
+          if (pull) { decisions[pull.decision] = {}; decisions[pull.decision][pull.option] = { when: {} }; decisions[pull.decision][pull.option].when[pull.value] = 0.9; }
+          return { version: version, npcs: { opponent: { decisions: decisions } } };
+        }
+        function point(won) {
+          round += 1;
+          send({ type: "event", name: "shot", round: round, t: t, by: "player", data: {} });
+          send({ type: "round_end", round: round, t: t, winner: won ? "player" : "opponent" });
+        }
+        function readNow() {
+          Object.keys(values).forEach(function (name) {
+            var pull = (goal[name] - values[name]) * 0.12;
+            values[name] = Math.max(0.02, Math.min(0.98, values[name] + pull + (rand() - 0.5) * 0.07));
+          });
+          events += 1;
+          send({ type: "player_read", round: round, t: t, values: Object.assign({}, values), based_on_events: events, why: "", low_confidence: [] });
+        }
+        function update() {
+          var u = UPDATES[next % UPDATES.length];
+          next += 1; version += 1;
+          var texts = function (list) { return list.map(function (e) { return e.text; }); };
+          var isSetting = function (e) { return /^settings\./.test(e.where); };
+          var changes = [{ kind: u.ease ? "fairness" : "behaviour", where: "npcs.opponent.decisions." + u.pull.decision + "." + u.pull.option, why: u.changing[0].text }];
+          u.changing.filter(isSetting).forEach(function (e) { changes.push({ kind: "fairness", where: e.where, why: e.text }); });
+          var message = { type: "strategy_update", version: version, source: "neon",
+            observations: texts(u.seen), plan: texts(u.changing.filter(function (e) { return !isSetting(e); })),
+            changes: changes, behaviour: behaviour(u.pull) };
+          if (!plain) { message.seen = u.seen; message.changing = u.changing; }
+          send(message);
+          Object.assign(goal, u.drift);
+          if (auto) setPaused(true);
+        }
+
+        send({ type: "setup", game: "tennis",
+          about: "One human player plays single points against one AI opponent.",
+          goal: "Start beatable and adapt until the player wins about half the points.",
+          npcs: { opponent: { about: "The AI tennis player on the far side of the net.", decisions: {
+            shot_type: { label: "Shot type", options: { slice: { label: "slice" }, dropshot: { label: "dropshots" }, flat: { label: "flat balls" } } },
+            position: { label: "Position", options: { net: { label: "close to the net" } } } } } } });
+        send({ type: "ready", values: VALUES, behaviour: behaviour(null) });
+        send({ type: "trace", stage: "adapter", status: "done", model: "gemini-4-neon", about: "" });
+        /* ten points already played, eight of them the player's, and one update in */
+        [1, 1, 0, 1, 1, 1, 1, 0, 1, 1].forEach(function (won, i) { t = 2 + i * 2; point(!!won); });
+        for (var i = 0; i < 6; i++) readNow();
+        update();
+        setPaused(params.get("pause") !== "0");
+
+        var since = { read: 0, point: 0, update: 0 };
+        setInterval(function () {
+          if (paused) return;   /* a paused game plays nothing */
+          t += 0.1;
+          since.read += 0.1; since.point += 0.1; since.update += 0.1;
+          if (since.read >= 0.4) { since.read = 0; readNow(); }
+          if (since.point >= 2.4) {
+            since.point = 0;
+            var chance = Math.max(0.5, 0.8 - (t - 22) / 90 * 0.3);
+            point(rand() < chance);
           }
-          var began = performance.now(), i = 0;
-          (function step() {
-            var now = (performance.now() - began) / 1000 * speed;
-            while (i < lines.length && (lines[i].t || 0) <= now) panels.feed(lines[i++]);
-            if (i < lines.length) setTimeout(step, 50);
-          })();
-        });
+          if (since.update >= 15) { since.update = 0; update(); }
+        }, 100);
       });
     })();
   </script>
