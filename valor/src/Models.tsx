@@ -1,0 +1,218 @@
+import type * as React from "react";
+import { useMemo, useLayoutEffect, useEffect } from "react";
+import { useGLTF } from "@react-three/drei";
+import { createPortal, useFrame } from "@react-three/fiber";
+import { Box3, Vector3, Object3D, Quaternion, AnimationMixer, AnimationClip, type Mesh } from "three";
+import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
+
+// The Chicken Gun map, carved to one plaza in Blender then optimized: 1.6 MB,
+// 85 draw calls (was 24 MB / 785). WebP@512 + Draco + BLEND->OPAQUE material audit.
+// Source 24 MB original kept at arena_chickengun.glb. Re-carve: see README "Optimizing the arena".
+// Perf: the arena is static, so its nodes skip per-frame matrix recomposition,
+// and it receives the sun's shadow (characters/props cast onto it).
+// Re-encoded with EXT_meshopt_compression (float positions kept so the Rapier
+// trimesh collider reads real coordinates) — no Draco decoder fetched from a CDN.
+export function Arena() {
+  const { scene } = useGLTF("/models/arena_opt.glb");
+  useLayoutEffect(() => {
+    scene.traverse((o) => {
+      if ((o as Mesh).isMesh) {
+        // Receive only: the characters' shadows land on the ground, but the
+        // arena itself stays out of the shadow pass (its ~85 draws would double).
+        o.receiveShadow = true;
+      }
+      if (o !== scene) {
+        o.updateMatrix();
+        o.matrixAutoUpdate = false;
+      }
+    });
+  }, [scene]);
+  return <primitive object={scene} />;
+}
+
+// One of the 3 characters. Swap the path for character_b.glb / clay.glb.
+export function Character({ url = "/models/character_a.glb", ...props }: { url?: string } & React.ComponentProps<"group">) {
+  const { scene } = useGLTF(url);
+  return (
+    <group {...props}>
+      <primitive object={scene.clone()} />
+    </group>
+  );
+}
+
+// Auto-fit any character GLB to `height` world units, feet at the group origin.
+// Models are authored at wildly different scales AND orientations: clay is laid
+// flat (raw z=116 is head->toe), while character_a/b are already upright (raw
+// y=1.16 is tallest). So we: (1) clone the rig correctly, (2) if Y isn't already
+// the tallest axis, rotate the longest axis up to stand it on its feet, (3) scale
+// to `height`, (4) recenter X/Z + drop feet (min.y) onto the inner group's y=0.
+// WHERE it stands is fully up to the caller's `position` prop — the arena is
+// messy carved geometry (overhangs, layered floors) so auto-snapping picked the
+// wrong surface; the control panel places it by hand instead.
+export function FitModel({
+  url,
+  height = 3,
+  hold,
+  // Defaults are the "while animating" hold preset — in-game a clip is always
+  // playing, so the gun sits in the grip for the animated hand pose. (The studio
+  // swaps to a separate bind-pose preset when no clip is selected.)
+  holdOffset = [0.04, 0.24, -0.02],
+  holdRotation = [(-277 * Math.PI) / 180, (15 * Math.PI) / 180, (-75 * Math.PI) / 180],
+  holdScale = 1.2,
+  gripCurl = 1,
+  animation,
+  ...props
+}: {
+  url: string;
+  height?: number;
+  // Optional Mixamo .fbx clip to play on the rig. Both these GLBs and the FBX
+  // pack share the mixorig skeleton, so a clip retargets by bone name. Pass the
+  // url to a file under /animations; omit (or "") to show the static bind pose.
+  animation?: string;
+  // Optional item to place in the character's right hand (e.g. <Gun/>). It's
+  // portaled INTO the hand bone so it tracks the rig; authored at real-world
+  // units, then un-scaled by the bone's own scale so size is character-agnostic.
+  hold?: React.ReactNode;
+  // Fine-tune how the held item sits in the palm (the panel drives these so the
+  // gun can be snapped into the grip without code edits). Offset is in metres,
+  // rotation in radians, scale is a multiplier on top of the auto hand-scale.
+  holdOffset?: [number, number, number];
+  holdRotation?: [number, number, number];
+  holdScale?: number;
+  // How much to curl the right-hand fingers around the grip, 0..1. The rig is in
+  // bind pose (straight fingers) and no animation poses the hand, so we bend the
+  // finger bones procedurally to make a fist around the gun.
+  gripCurl?: number;
+} & React.ComponentProps<"group">) {
+  const { scene } = useGLTF(url);
+
+  const { object, scale, offset, hand, handScale, fingerBones } = useMemo(() => {
+    // SkeletonUtils.clone (not scene.clone) so skinned/rigged meshes keep their
+    // own skeleton — a plain clone collapses multi-mesh rigs to the origin.
+    const object = cloneSkinned(scene);
+    object.updateMatrixWorld(true);
+    // Stand it up ONLY if it's lying down (Y not already the tallest axis).
+    const raw = new Box3().setFromObject(object).getSize(new Vector3());
+    if (raw.y >= raw.x && raw.y >= raw.z) {
+      // already upright — leave it
+    } else if (raw.z >= raw.x) {
+      object.rotation.x = -Math.PI / 2; // Z (head->toe) -> Y
+    } else {
+      object.rotation.z = Math.PI / 2; // X (head->toe) -> Y
+    }
+    object.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(object); // bounds AFTER standing it up
+    const size = box.getSize(new Vector3());
+    const center = box.getCenter(new Vector3());
+    const scale = height / (size.y || 1);
+    const offset: [number, number, number] = [
+      -center.x * scale,
+      -box.min.y * scale, // feet (min.y) land on the inner group's y=0
+      -center.z * scale,
+    ];
+
+    // Find the right-hand bone to hang a held item on, plus the finger joints to
+    // curl. These rigs are reduced Mixamo hands: only Thumb + Index bones exist.
+    let hand: Object3D | null = null;
+    const fingerBones: { bone: Object3D; restQ: Quaternion }[] = [];
+    object.traverse((o) => {
+      if (!hand && o.name === "mixamorigRightHand") hand = o;
+      // Joints 1-3 are the bendable knuckles (4 is the fingertip end — skip it).
+      if (/mixamorigRightHand(Thumb|Index)[123]$/.test(o.name)) {
+        fingerBones.push({ bone: o, restQ: o.quaternion.clone() });
+      }
+    });
+    // The bone lives at the rig's native scale; the whole model is then scaled by
+    // `scale`. A gun authored in real metres must be divided by (scale * boneScale)
+    // so it ends up the right physical size in the hand. boneScale ~= the rig's
+    // own world scale at the hand.
+    const handScale = hand ? 1 / (scale * new Vector3().setFromMatrixScale((hand as Object3D).matrixWorld).x) : 1;
+
+    return { object, scale, offset, hand, handScale, fingerBones };
+  }, [scene, height]);
+
+  // Curl the finger joints around the grip. These finger bones extend down their
+  // own local +Y, so flexing toward the palm = rotating about local X. We restore
+  // the rest orientation then rotateX in the bone's OWN frame, so segments with
+  // flipped Euler frames still curl consistently into a fist (a plain rotation.x
+  // assignment didn't — the frames alternate sign and cancelled out).
+  useLayoutEffect(() => {
+    for (const { bone, restQ } of fingerBones) {
+      bone.quaternion.copy(restQ);
+      bone.rotateX(gripCurl * 1.2); // ~69° max curl per joint
+    }
+  }, [fingerBones, gripCurl]);
+
+  return (
+    <group {...props}>
+      <group scale={scale} position={offset}>
+        <primitive object={object} />
+      </group>
+      {/* Play a Mixamo clip on the cloned rig. Keyed by url so switching clips
+          tears down the old mixer and rebuilds against the same object. */}
+      {animation && <ClipPlayer key={animation} target={object} url={animation} />}
+      {/* Portal the held item into the hand bone so it follows the rig. The inner
+          group orients a -Z-forward gun to sit in a Mixamo palm + sizes it. */}
+      {hold && hand &&
+        createPortal(
+          // Outer group: bone-space scale so metre units behave. Inner group: the
+          // panel-driven offset/rotation/scale that snaps the gun into the grip.
+          <group scale={handScale}>
+            <group position={holdOffset} rotation={holdRotation} scale={holdScale}>
+              {hold}
+            </group>
+          </group>,
+          hand,
+        )}
+    </group>
+  );
+}
+
+// Drives a Mixamo clip onto an already-built rig (`target`). The clips ship as
+// GLBs (converted from the FBX pack via Blender — three's FBXLoader can't read
+// the FBX 2020 binaries). The clip and the character GLBs both use the mixamorig
+// skeleton, so a clip retargets purely by bone name — with two fixups: (1) the
+// clip's nodes keep the "mixamorig:Bone" colon while the character GLB strips it
+// to "mixamorigBone", so we normalize track names to match; (2) we drop every
+// position track. The clip is authored in centimetres while the rig is metres,
+// so an absolute hip-translation track would fling the model skyward — dropping
+// translation gives a clean in-place preview (bones keep their bind offsets and
+// only rotate), which is exactly what the studio wants.
+function ClipPlayer({ target, url }: { target: Object3D; url: string }) {
+  const { animations } = useGLTF(url);
+  const mixer = useMemo(() => new AnimationMixer(target), [target]);
+
+  useEffect(() => {
+    const src = animations[0];
+    if (!src) return;
+    // Bones the target rig actually has — these are reduced Mixamo hands (only
+    // Thumb + Index), so dropping tracks for the missing Middle/Ring/Pinky bones
+    // avoids a flood of harmless "No target node found" PropertyBinding warnings.
+    const bones = new Set<string>();
+    target.traverse((o) => bones.add(o.name));
+    const tracks = src.tracks
+      .filter((t) => !t.name.endsWith(".position"))
+      .map((t) => {
+        const c = t.clone();
+        c.name = c.name.replace(/:/g, ""); // mixamorig:Hips.quaternion -> mixamorigHips.quaternion
+        return c;
+      })
+      .filter((t) => bones.has(t.name.split(".")[0]));
+    const clip = new AnimationClip(url, src.duration, tracks);
+    const action = mixer.clipAction(clip);
+    action.reset().play();
+    return () => {
+      mixer.stopAllAction();
+      mixer.uncacheClip(clip);
+    };
+  }, [animations, mixer, url]);
+
+  useFrame((_, dt) => mixer.update(dt));
+  return null;
+}
+
+useGLTF.preload("/models/arena_opt.glb");
+useGLTF.preload("/models/character_a.glb");
+useGLTF.preload("/models/character_b.glb");
+// (clay.glb is studio-only and Draco-compressed — not preloaded, so the game
+// never downloads it or the Draco decoder.)
