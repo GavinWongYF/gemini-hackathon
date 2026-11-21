@@ -3,23 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Adaptive AI Tennis — Hardware & Game</title>
+    <title>Tennis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <style>
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
       html, body, #root {
         width: 100%;
         height: 100%;
         margin: 0;
+        background: #f8f9fa;
+        color: #1f1f1f;
+        font-family: 'Google Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
       .scene-root {
         position: relative;
         width: 100%;
         height: 100%;
       }
+      npc-panel {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
     </style>
-    <!-- Felix & Gavin's live side-panel custom elements (graceful no-op when :8000 is offline) -->
-    <script type="module" src="http://localhost:8000/screen/panels.js" async></script>
+    <script type="module" src="http://localhost:8000/screen/panels.js"></script>
   </head>
-  <body style="margin: 0; background: #090d16; color: #f1f5f9;">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
