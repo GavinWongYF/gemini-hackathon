@@ -14,47 +14,49 @@ export interface ImuClassifierConfig {
   armAccelG: number;
   /** Bias-corrected gyro rate (deg/s) for a normal/fast swing */
   armGyroDps: number;
-  /** Low dynamic acceleration (g) so slow/gentle dropshots still register */
+  /** Minimum dynamic acceleration (g) for a deliberate soft dropshot (blocks casual hand motion!) */
   dropAccelG: number;
-  /** Low gyro threshold (deg/s) for slow/gentle dropshots */
+  /** Minimum gyro rate (deg/s) for a deliberate soft dropshot */
   dropGyroDps: number;
   /** Max dynamic G mapped to power = 1.0 */
   maxAccelG: number;
   /** Max gyro rate (deg/s) mapped to power = 1.0 */
   maxGyroDps: number;
-  /** Refractory cooldown after a completed swing (ms) */
+  /** Refractory cooldown after a completed swing (ms) — prevents follow-through & recovery double-hits */
   cooldownMs: number;
-  /** Max power classified as a soft dropshot (0..1) in heuristic mode */
+  /** Power cutoff below which a deliberate swing is classified as a dropshot (0..1) */
   dropshotPowerMax: number;
-  /** Spin score below this classifies as slice; above classifies as topspin */
-  sliceRotationThreshold: number;
+  /** Spin/vertical score below this classifies as slice; above classifies as topspin */
+  sliceThreshold: number;
   /** Invert horizontal aim angle if needed */
   invertAngle: boolean;
-  /** Invert topspin/slice axis if screen faces opposite way */
+  /** Invert topspin/slice axis if needed */
   invertRotation: boolean;
 }
 
 export const DEFAULT_IMU_CONFIG: ImuClassifierConfig = {
-  armAccelG: 1.1,
-  armGyroDps: 145,
-  dropAccelG: 0.30,
-  dropGyroDps: 42,
-  maxAccelG: 4.0,
-  maxGyroDps: 600,
-  cooldownMs: 600,
-  dropshotPowerMax: 0.42,
-  sliceRotationThreshold: -0.12,
+  armAccelG: 0.90,
+  armGyroDps: 140,
+  dropAccelG: 0.52,
+  dropGyroDps: 80,
+  maxAccelG: 3.6,
+  maxGyroDps: 540,
+  cooldownMs: 700,
+  dropshotPowerMax: 0.43,
+  sliceThreshold: -0.14,
   invertAngle: false,
   invertRotation: false,
 };
 
-/** 5D kinematic feature vector for nearest-centroid personal shot calibration */
-export interface SwingFeatureVector {
-  power: number;
-  faceScore: number;
-  brushScore: number;
-  camVertScore: number;
-  gyroRatio: number;
+export interface EarlySwingGuess {
+  swingStartMs: number;
+  nowMs: number;
+  initialSpeed: number;
+  imuBackswing: number;
+  preFaceOpen: number;
+  earlyVerticalG: number;
+  peakAccelG: number;
+  peakGyroDps: number;
 }
 
 export interface RawClassifiedSwing {
@@ -69,28 +71,26 @@ export interface RawClassifiedSwing {
   shotType: HumanShotType;
   rotation: number;
   confidence: number;
-  features: SwingFeatureVector;
-}
-
-export interface ShotTrainingState {
-  counts: Record<HumanShotType, number>;
-  active: boolean;
 }
 
 type SwingState = 'idle' | 'armed' | 'cooldown';
 
 const ZERO_SAMPLES_REQUIRED = 25; // ~0.25s at 100 Hz
-const TRAINING_STORAGE_KEY = 'tennis_imu_shot_training_v1';
 
 /**
- * Bulletproof, orientation-invariant M5Stack 6-axis IMU swing detector & classifier:
- *  1. Uses true gravity-magnitude dynamic acceleration (`| |a| - restAccelMag |`),
- *     so rotating the M5 to ANY angle (forehand, backhand, upside-down) NEVER causes
- *     false triggers and NEVER freezes/locks up cooldown!
- *  2. Hard cooldown ceiling (`cooldownMs + 220ms`) guarantees zero state-machine lockups.
- *  3. Supports BOTH instant physics defaults AND a 6-second "Teach My 3 Shots"
- *     5D nearest-centroid classifier (persisted in localStorage) for ~95%+ personal accuracy
- *     with calibrated `confidence` (0..1).
+ * Universal, zero-training M5Stack 6-axis IMU swing detector & shot classifier.
+ * Designed to work out-of-the-box for ANY player or judge:
+ *
+ *  1. ZERO Pose: Player holds M5 horizontally across body like a tennis racket and
+ *     presses ZERO (BtnA / UI / R). Locks true world-vertical UP (`uUp`), resting
+ *     accel magnitude (`restAccelMag`), and gyro zero-bias (`gx/gy/gz`).
+ *  2. Zero False Triggers: Casual arm movement & repositioning (~0.15–0.4g, 20–65°/s)
+ *     is ignored. Only deliberate swings (soft dropshot tap OR full swing) trigger,
+ *     with a 700ms refractory cooldown blocking follow-through double-hits.
+ *  3. Universal Shot Classification (works for every grip, forehand & backhand):
+ *       - DROPSHOT : deliberate low-power touch swing (`power <= dropshotPowerMax`)
+ *       - TOPSPIN  : medium/fast swing moving LOW -> HIGH (webcam ΔarmY + IMU upward impulse + closed face)
+ *       - SLICE    : medium/fast chop moving HIGH -> LOW (webcam ΔarmY + IMU downward impulse + open face)
  */
 export class ImuSwingClassifier {
   private config: ImuClassifierConfig = { ...DEFAULT_IMU_CONFIG };
@@ -104,20 +104,17 @@ export class ImuSwingClassifier {
   private zeroGyrSumY = 0;
   private zeroGyrSumZ = 0;
 
-  // Calibrated ZERO basis
   private uUpX = 0;
   private uUpY = 0;
   private uUpZ = 1;
   private restAccelMag = 1.0;
   private restFaceAz = 0;
 
-  // Smooth orientation gravity tracker (ALWAYS updates when idle — never freezes!)
   private gxEst = 0;
   private gyEst = 0;
   private gzEst = 1;
   private initializedGravity = false;
 
-  // Calibrated gyro zero-bias (deg/s)
   private gyroBiasX = 0;
   private gyroBiasY = 0;
   private gyroBiasZ = 0;
@@ -129,16 +126,15 @@ export class ImuSwingClassifier {
   private relYawDeg = 0;
 
   private lastSampleMs: number | null = null;
-  private angleFilter = new OneEuroFilter(5.0, 0.45, 1.0);
-  private rotFilter = new OneEuroFilter(5.0, 0.45, 1.0);
+  private angleFilter = new OneEuroFilter(4.5, 0.35, 1.0);
+  private rotFilter = new OneEuroFilter(4.5, 0.35, 1.0);
 
-  // Swing state machine
   private state: SwingState = 'idle';
   private swingStartMs = 0;
   private cooldownUntilMs = 0;
   private cooldownMaxUntilMs = 0;
   private quietSinceMs: number | null = null;
-  private softMotionSinceMs: number | null = null;
+  private dropPulseSinceMs: number | null = null;
   private peakAccelG = 0;
   private peakGyroDps = 0;
   private peakEnergy = 0;
@@ -146,13 +142,8 @@ export class ImuSwingClassifier {
   private swingPreFaceOpen = 0;
   private earlyVerticalImpulse = 0;
   private earlyVerticalSamples = 0;
-
-  // Personal 5D nearest-centroid training samples per shot type
-  private trainingSamples: Record<HumanShotType, SwingFeatureVector[]> = {
-    topspin: [],
-    slice: [],
-    dropshot: [],
-  };
+  private pendingEarlyGuess: EarlySwingGuess | null = null;
+  private earlyGuessEmitted = false;
 
   private latestReading: GyroReading = {
     power: 0,
@@ -166,10 +157,6 @@ export class ImuSwingClassifier {
   };
 
   private lastClassifiedShot: HumanShotType = 'topspin';
-
-  constructor() {
-    this.loadTrainingFromStorage();
-  }
 
   getConfig(): ImuClassifierConfig {
     return { ...this.config };
@@ -189,29 +176,6 @@ export class ImuSwingClassifier {
     return clamp(this.zeroCount / ZERO_SAMPLES_REQUIRED, 0, 1);
   }
 
-  getTrainingState(): ShotTrainingState {
-    const counts: Record<HumanShotType, number> = {
-      topspin: this.trainingSamples.topspin.length,
-      slice: this.trainingSamples.slice.length,
-      dropshot: this.trainingSamples.dropshot.length,
-    };
-    const active = counts.topspin > 0 && counts.slice > 0 && counts.dropshot > 0;
-    return { counts, active };
-  }
-
-  addTrainingExample(label: HumanShotType, features: SwingFeatureVector) {
-    this.trainingSamples[label].push({ ...features });
-    if (this.trainingSamples[label].length > 8) {
-      this.trainingSamples[label].shift();
-    }
-    this.saveTrainingToStorage();
-  }
-
-  clearTraining() {
-    this.trainingSamples = { topspin: [], slice: [], dropshot: [] };
-    this.saveTrainingToStorage();
-  }
-
   startZeroing() {
     this.phase = 'zeroing';
     this.zeroCount = 0;
@@ -223,7 +187,7 @@ export class ImuSwingClassifier {
     this.zeroGyrSumZ = 0;
 
     this.state = 'idle';
-    this.softMotionSinceMs = null;
+    this.dropPulseSinceMs = null;
     this.quietSinceMs = null;
     this.relYawDeg = 0;
     this.preFaceHistory = [];
@@ -246,120 +210,68 @@ export class ImuSwingClassifier {
     return this.lastClassifiedShot;
   }
 
+  consumeEarlySwingGuess(): EarlySwingGuess | null {
+    const g = this.pendingEarlyGuess;
+    this.pendingEarlyGuess = null;
+    return g;
+  }
+
   /**
-   * Computes wing-aware + webcam-fused 5D features and classifies into
-   * `topspin | slice | dropshot` with calibrated confidence `0..1`.
-   * Uses the personal nearest-centroid model if all 3 shots have >=1 recorded example;
-   * otherwise uses physics heuristics.
+   * Universal wing-aware + webcam-fused shot classification.
+   * Prioritizes grip-independent vertical swing path (low→high vs high→low)
+   * plus wing-corrected racket face tilt and swing power.
    */
   resolveShot(
     swing: RawClassifiedSwing,
     wing: StrokeWing,
     webcamDeltaArmY = 0,
     hasWebcamData = false,
-  ): { shotType: HumanShotType; rotation: number; confidence: number; features: SwingFeatureVector } {
+  ): { shotType: HumanShotType; rotation: number; confidence: number } {
     const rotSign = this.config.invertRotation ? -1 : 1;
     const wingFaceSign = wing === 'backhand' ? -1 : 1;
 
-    const faceScore = clamp(rotSign * (-swing.preFaceOpen * wingFaceSign * 1.75), -1, 1);
-    const brushScore = clamp(rotSign * (swing.earlyVerticalG / 1.2), -1, 1);
-    const camVertScore = hasWebcamData ? clamp(webcamDeltaArmY / 0.14, -1, 1) : 0;
-    const gyroRatio = clamp(
-      swing.peakGyroDps / Math.max(80, swing.peakAccelG * 220 + 60),
-      0,
-      1.5,
-    );
+    // 1. Grip-invariant vertical swing path (primary for all users!)
+    const brushScore = clamp(swing.earlyVerticalG / 1.1, -1, 1);
+    const camVertScore = hasWebcamData ? clamp(webcamDeltaArmY / 0.12, -1, 1) : 0;
 
-    const features: SwingFeatureVector = {
-      power: swing.power,
-      faceScore,
-      brushScore,
-      camVertScore,
-      gyroRatio,
-    };
+    // 2. Wing-corrected racket face tilt (open skyward = negative/slice, closed = positive/topspin)
+    const faceScore = clamp(-swing.preFaceOpen * wingFaceSign * 1.5, -1, 1);
 
-    const spinRotation =
-      hasWebcamData && Math.abs(webcamDeltaArmY) > 0.025
-        ? clamp(faceScore * 0.4 + brushScore * 0.25 + camVertScore * 0.55, -1, 1)
-        : clamp(faceScore * 0.6 + brushScore * 0.5, -1, 1);
-
-    // Tier B: Personal 5D nearest-centroid classifier (if trained on all 3 shot types)
-    const train = this.getTrainingState();
-    if (train.active) {
-      const labels: HumanShotType[] = ['topspin', 'slice', 'dropshot'];
-      // Feature weights tuned for tennis kinematics
-      const weights = {
-        power: 2.6,
-        faceScore: 1.8,
-        brushScore: 1.2,
-        camVertScore: hasWebcamData ? 2.0 : 0.0,
-        gyroRatio: 0.8,
-      };
-
-      const dists: Record<HumanShotType, number> = {
-        topspin: Infinity,
-        slice: Infinity,
-        dropshot: Infinity,
-      };
-
-      for (const lbl of labels) {
-        const list = this.trainingSamples[lbl];
-        const mean: SwingFeatureVector = {
-          power: 0,
-          faceScore: 0,
-          brushScore: 0,
-          camVertScore: 0,
-          gyroRatio: 0,
-        };
-        for (const f of list) {
-          mean.power += f.power;
-          mean.faceScore += f.faceScore;
-          mean.brushScore += f.brushScore;
-          mean.camVertScore += f.camVertScore;
-          mean.gyroRatio += f.gyroRatio;
-        }
-        const n = list.length;
-        mean.power /= n;
-        mean.faceScore /= n;
-        mean.brushScore /= n;
-        mean.camVertScore /= n;
-        mean.gyroRatio /= n;
-
-        const d2 =
-          weights.power * (features.power - mean.power) ** 2 +
-          weights.faceScore * (features.faceScore - mean.faceScore) ** 2 +
-          weights.brushScore * (features.brushScore - mean.brushScore) ** 2 +
-          weights.camVertScore * (features.camVertScore - mean.camVertScore) ** 2 +
-          weights.gyroRatio * (features.gyroRatio - mean.gyroRatio) ** 2;
-        dists[lbl] = Math.sqrt(d2);
-      }
-
-      const sorted = labels.slice().sort((a, b) => dists[a] - dists[b]);
-      const best = sorted[0];
-      const second = sorted[1];
-      const margin = dists[second] - dists[best];
-      const confidence = clamp(0.55 + margin / (dists[second] + 0.35) * 0.45, 0.5, 0.99);
-
-      this.lastClassifiedShot = best;
-      return { shotType: best, rotation: spinRotation, confidence, features };
+    let spinRotation: number;
+    if (hasWebcamData && Math.abs(webcamDeltaArmY) > 0.025) {
+      // When webcam sees clear upward/downward arm travel, trust it strongly (works for ANY grip!)
+      spinRotation = clamp(
+        rotSign * (camVertScore * 0.55 + brushScore * 0.25 + faceScore * 0.25),
+        -1,
+        1,
+      );
+    } else {
+      // IMU-only fallback: blend vertical brush + face tilt
+      spinRotation = clamp(rotSign * (brushScore * 0.55 + faceScore * 0.55), -1, 1);
     }
 
-    // Tier A: Physics heuristic defaults (out of the box)
     let shotType: HumanShotType;
     let confidence: number;
-    if (swing.power <= this.config.dropshotPowerMax) {
+
+    // A true Dropshot is genuinely soft in BOTH acceleration AND rotational speed.
+    // Downward high->low slice chops partially cancel +1g gravity in |a|, so checking
+    // peakGyroDps prevents crisp slices from being mislabeled as dropshots!
+    const isSoftDropshot =
+      swing.power <= this.config.dropshotPowerMax && swing.peakGyroDps < 210;
+
+    if (isSoftDropshot) {
       shotType = 'dropshot';
-      confidence = clamp(0.65 + (this.config.dropshotPowerMax - swing.power) * 1.1, 0.6, 0.95);
-    } else if (spinRotation < this.config.sliceRotationThreshold) {
+      confidence = clamp(0.68 + (this.config.dropshotPowerMax - swing.power) * 0.9, 0.6, 0.96);
+    } else if (spinRotation < this.config.sliceThreshold) {
       shotType = 'slice';
-      confidence = clamp(0.6 + Math.abs(spinRotation - this.config.sliceRotationThreshold) * 0.5, 0.55, 0.95);
+      confidence = clamp(0.62 + Math.abs(spinRotation - this.config.sliceThreshold) * 0.45, 0.55, 0.96);
     } else {
       shotType = 'topspin';
-      confidence = clamp(0.6 + Math.abs(spinRotation - this.config.sliceRotationThreshold) * 0.5, 0.55, 0.95);
+      confidence = clamp(0.62 + Math.abs(spinRotation - this.config.sliceThreshold) * 0.45, 0.55, 0.96);
     }
 
     this.lastClassifiedShot = shotType;
-    return { shotType, rotation: spinRotation, confidence, features };
+    return { shotType, rotation: spinRotation, confidence };
   }
 
   ingest(sample: RawImuSample, nowMs = performance.now()): RawClassifiedSwing | null {
@@ -423,7 +335,7 @@ export class ImuSwingClassifier {
       return null;
     }
 
-    // Step B: Locked until player presses ZERO
+    // Step B: Locked until player holds racket horizontally across body & presses ZERO
     if (this.phase === 'needs_zero') {
       if (!this.initializedGravity) {
         this.gxEst = sample.ax;
@@ -450,12 +362,11 @@ export class ImuSwingClassifier {
     const gy = sample.gy - this.gyroBiasY;
     const gz = sample.gz - this.gyroBiasZ;
 
-    // True orientation-invariant dynamic acceleration magnitude!
-    // Rotating the M5 to ANY angle keeps |a| == restAccelMag -> dynAccelG == 0!
+    // Orientation-invariant dynamic acceleration magnitude
     const dynAccelG = Math.abs(accelMag - this.restAccelMag);
     const gyroRateDps = Math.hypot(gx, gy, gz);
 
-    // Smoothly track orientation gravity vector whenever NOT actively armed (NEVER freezes!)
+    // Smooth gravity vector tracker (NEVER freezes on rotation)
     if (this.state !== 'armed') {
       const gAlpha = dynAccelG < 0.25 ? 0.14 : 0.04;
       this.gxEst += gAlpha * (sample.ax - this.gxEst);
@@ -463,12 +374,11 @@ export class ImuSwingClassifier {
       this.gzEst += gAlpha * (sample.az - this.gzEst);
     }
 
-    // Component-wise linear accel for vertical brush direction only
     const linAx = sample.ax - this.gxEst;
     const linAy = sample.ay - this.gyEst;
     const linAz = sample.az - this.gzEst;
 
-    // Slow online gyro-bias tracking when genuinely still
+    // Online gyro-bias tracking when genuinely stationary
     if (this.state === 'idle' && accelDelta < 0.05 && dynAccelG < 0.12 && gyroRateDps < 16) {
       const bAlpha = 0.02;
       this.gyroBiasX += bAlpha * (sample.gx - this.gyroBiasX);
@@ -497,7 +407,7 @@ export class ImuSwingClassifier {
     const rotSign = this.config.invertRotation ? -1 : 1;
 
     const rawAngle = clamp((yawSign * this.relYawDeg) / 45, -1, 1);
-    const liveSpinBias = clamp(rotSign * (-faceOpen * 1.65), -1, 1);
+    const liveSpinBias = clamp(rotSign * (-faceOpen * 1.5), -1, 1);
 
     const filteredAngle = this.angleFilter.filter(rawAngle, nowMs);
     const filteredRotation = this.rotFilter.filter(liveSpinBias, nowMs);
@@ -514,12 +424,9 @@ export class ImuSwingClassifier {
       rawYawDeg: this.relYawDeg,
     };
 
-    // Single-trigger-per-swing state machine (with hard cooldown ceiling — CANNOT hang!)
+    // Single-trigger-per-swing state machine (strict anti-false-trigger + hard ceiling)
     if (this.state === 'cooldown') {
-      const isQuiet =
-        dynAccelG < Math.max(0.25, this.config.dropAccelG * 0.9) &&
-        gyroRateDps < Math.max(55, this.config.dropGyroDps * 1.2);
-
+      const isQuiet = dynAccelG < 0.30 && gyroRateDps < 60;
       if (isQuiet) {
         if (this.quietSinceMs === null) this.quietSinceMs = nowMs;
       } else {
@@ -529,13 +436,13 @@ export class ImuSwingClassifier {
       const quietUnlocked =
         nowMs >= this.cooldownUntilMs &&
         this.quietSinceMs !== null &&
-        nowMs - this.quietSinceMs >= 60;
+        nowMs - this.quietSinceMs >= 80;
       const ceilingUnlocked = nowMs >= this.cooldownMaxUntilMs;
 
       if (quietUnlocked || ceilingUnlocked) {
         this.state = 'idle';
         this.quietSinceMs = null;
-        this.softMotionSinceMs = null;
+        this.dropPulseSinceMs = null;
       }
       return null;
     }
@@ -545,29 +452,32 @@ export class ImuSwingClassifier {
       gyroRateDps / Math.max(20, this.config.armGyroDps);
 
     if (this.state === 'idle') {
-      // Path 1: Normal / fast swing (immediate arm)
-      const fastSwing =
-        dynAccelG >= this.config.armAccelG && gyroRateDps >= this.config.armGyroDps;
+      // Path 1: Clear full/medium swing — requires BOTH real accel AND real whip
+      // (or a sharp wrist snap >= 210 deg/s with >= 0.38g)
+      const fullSwing =
+        (dynAccelG >= this.config.armAccelG && gyroRateDps >= this.config.armGyroDps) ||
+        (gyroRateDps >= this.config.armGyroDps * 1.55 && dynAccelG >= 0.38);
 
-      // Path 2: Slow / gentle dropshot swing (sustained >= 25ms above low floor)
-      const aboveDropFloor =
+      // Path 2: Deliberate soft dropshot — requires BOTH moderate accel AND gyro sustained >= 35ms
+      // Casual arm repositioning (~0.2g / 35°/s) will NEVER cross this!
+      const deliberateDrop =
         dynAccelG >= this.config.dropAccelG && gyroRateDps >= this.config.dropGyroDps;
 
       let softSwingArmed = false;
-      if (aboveDropFloor) {
-        if (this.softMotionSinceMs === null) {
-          this.softMotionSinceMs = nowMs;
-        } else if (nowMs - this.softMotionSinceMs >= 25) {
+      if (deliberateDrop) {
+        if (this.dropPulseSinceMs === null) {
+          this.dropPulseSinceMs = nowMs;
+        } else if (nowMs - this.dropPulseSinceMs >= 35) {
           softSwingArmed = true;
         }
       } else {
-        this.softMotionSinceMs = null;
+        this.dropPulseSinceMs = null;
       }
 
-      if (fastSwing || softSwingArmed) {
+      if (fullSwing || softSwingArmed) {
         this.state = 'armed';
-        this.swingStartMs = this.softMotionSinceMs ?? nowMs;
-        this.softMotionSinceMs = null;
+        this.swingStartMs = this.dropPulseSinceMs ?? nowMs;
+        this.dropPulseSinceMs = null;
         this.peakAccelG = dynAccelG;
         this.peakGyroDps = gyroRateDps;
         this.peakEnergy = energy;
@@ -582,6 +492,8 @@ export class ImuSwingClassifier {
 
         this.earlyVerticalImpulse = verticalAccelG;
         this.earlyVerticalSamples = 1;
+        this.earlyGuessEmitted = false;
+        this.pendingEarlyGuess = null;
       }
       return null;
     }
@@ -599,23 +511,40 @@ export class ImuSwingClassifier {
       this.earlyVerticalSamples += 1;
     }
 
-    const passedPeak = elapsedMs >= 65 && energy < this.peakEnergy * 0.55;
-    const maxWindowHit = elapsedMs >= 210;
+    // Emit one early animation anticipation guess ~25ms into a deliberate swing
+    if (!this.earlyGuessEmitted && elapsedMs >= 25) {
+      this.earlyGuessEmitted = true;
+      const initialSpeed = clamp(this.computePower(this.peakAccelG, this.peakGyroDps), 0.16, 1);
+      this.pendingEarlyGuess = {
+        swingStartMs: this.swingStartMs,
+        nowMs,
+        initialSpeed,
+        imuBackswing: clamp(Math.abs(this.relYawDeg) / 45, 0.15, 1),
+        preFaceOpen: this.swingPreFaceOpen,
+        earlyVerticalG: this.earlyVerticalImpulse / Math.max(1, this.earlyVerticalSamples),
+        peakAccelG: this.peakAccelG,
+        peakGyroDps: this.peakGyroDps,
+      };
+    }
+
+    const passedPeak = elapsedMs >= 60 && energy < this.peakEnergy * 0.52;
+    const maxWindowHit = elapsedMs >= 200;
 
     if (passedPeak || maxWindowHit) {
       this.state = 'cooldown';
       this.cooldownUntilMs = nowMs + this.config.cooldownMs;
-      this.cooldownMaxUntilMs = nowMs + this.config.cooldownMs + 220;
+      this.cooldownMaxUntilMs = nowMs + this.config.cooldownMs + 250;
       this.quietSinceMs = null;
 
+      // Reject anything below the deliberate dropshot floor
       if (
-        this.peakAccelG < this.config.dropAccelG * 1.05 &&
-        this.peakGyroDps < this.config.dropGyroDps * 1.05
+        this.peakAccelG < this.config.dropAccelG &&
+        this.peakGyroDps < this.config.armGyroDps * 1.4
       ) {
         return null;
       }
 
-      const power = clamp(this.computePower(this.peakAccelG, this.peakGyroDps), 0.14, 1);
+      const power = clamp(this.computePower(this.peakAccelG, this.peakGyroDps), 0.16, 1);
       const swingYawComponent = clamp((yawSign * this.swingYawAccum) / 38, -1, 1);
       const aimAngle = clamp(filteredAngle * 0.5 + swingYawComponent * 0.65, -1, 1);
       const earlyVerticalG = this.earlyVerticalImpulse / Math.max(1, this.earlyVerticalSamples);
@@ -631,21 +560,13 @@ export class ImuSwingClassifier {
         peakGyroDps: this.peakGyroDps,
         shotType: 'topspin',
         rotation: 0,
-        confidence: 0.7,
-        features: {
-          power,
-          faceScore: 0,
-          brushScore: 0,
-          camVertScore: 0,
-          gyroRatio: 0,
-        },
+        confidence: 0.75,
       };
 
       const resolved = this.resolveShot(rawSwing, 'forehand', 0, false);
       rawSwing.shotType = resolved.shotType;
       rawSwing.rotation = resolved.rotation;
       rawSwing.confidence = resolved.confidence;
-      rawSwing.features = resolved.features;
 
       return rawSwing;
     }
@@ -657,28 +578,5 @@ export class ImuSwingClassifier {
     const aNorm = clamp(dynAccelG / Math.max(0.5, this.config.maxAccelG), 0, 1);
     const gNorm = clamp(gyroDps / Math.max(50, this.config.maxGyroDps), 0, 1);
     return clamp(aNorm * 0.5 + gNorm * 0.5, 0, 1);
-  }
-
-  private saveTrainingToStorage() {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    try {
-      window.localStorage.setItem(TRAINING_STORAGE_KEY, JSON.stringify(this.trainingSamples));
-    } catch {
-      // ignore storage quota errors
-    }
-  }
-
-  private loadTrainingFromStorage() {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    try {
-      const raw = window.localStorage.getItem(TRAINING_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<Record<HumanShotType, SwingFeatureVector[]>>;
-      if (Array.isArray(parsed.topspin)) this.trainingSamples.topspin = parsed.topspin;
-      if (Array.isArray(parsed.slice)) this.trainingSamples.slice = parsed.slice;
-      if (Array.isArray(parsed.dropshot)) this.trainingSamples.dropshot = parsed.dropshot;
-    } catch {
-      // ignore malformed storage
-    }
   }
 }

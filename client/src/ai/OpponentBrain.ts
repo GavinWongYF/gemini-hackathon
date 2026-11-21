@@ -11,16 +11,24 @@ import type {
 import {
   DEFAULT_TENNIS_BEHAVIOUR,
   TENNIS_AI_AIM_OPTIONS,
+  TENNIS_AI_ANTICIPATE_OPTIONS,
   TENNIS_AI_POSITION_OPTIONS,
   TENNIS_AI_SHOT_TYPES,
   TENNIS_SETTINGS_BOUNDS,
   courtZoneToTarget,
   pick,
   type OpponentAimChoice,
+  type OpponentAnticipateChoice,
   type OpponentPositionChoice,
   type OpponentShotChoice,
   type TennisFacts,
 } from '@shared/agentProtocol';
+
+export interface OpponentAnticipationOutput {
+  move: OpponentAnticipateChoice;
+  byRule: boolean;
+  ruleWhy?: string;
+}
 
 export interface OpponentSettings {
   opponent_speed: number;
@@ -144,6 +152,31 @@ export class OpponentBrain {
 
   getLatestValues(): Record<string, number> {
     return { ...this.latestValues };
+  }
+
+  /**
+   * Called at `swing_start` (~100-160ms before ball contact) so the opponent can read
+   * pre-swing tells (`swing_early_guess`, `swing_backswing`, `swing_side`, `swing_arm_zone`)
+   * and start moving immediately with zero network delay!
+   */
+  decideAnticipation(
+    facts: TennisFacts,
+    legal: readonly OpponentAnticipateChoice[] = TENNIS_AI_ANTICIPATE_OPTIONS,
+  ): OpponentAnticipationOutput {
+    const res = pick(
+      'opponent',
+      'anticipate',
+      legal,
+      this.activeBehaviour,
+      this.latestValues,
+      facts,
+      this.rng,
+    );
+    return {
+      move: res.choice,
+      byRule: res.byRule,
+      ruleWhy: res.ruleWhy,
+    };
   }
 
   /**

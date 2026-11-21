@@ -251,6 +251,7 @@ export function runPracticeBatch(
 
   const maxTicks = req.rounds * 60 * 35; // safety ceiling
   let swingAttemptedForBounceKey = -1;
+  let swingStartEmittedForBounceKey = -1;
 
   for (let tick = 0; tick < maxTicks && engine.getRenderState().phase !== 'match_over'; tick++) {
     engine.stepFixed(PHYSICS.DT);
@@ -266,11 +267,33 @@ export function runPracticeBatch(
     }
 
     if (engine.isBallReturnableByPlayer()) {
+      const bounceKey = engine.getRenderState().score.pointIndex * 1000 + engine.getCurrentRallyShotCount();
+      // ~120ms before contact (as ball bounces/approaches), emit `swing_start` so `anticipate` rules work in headless runs too!
+      const inWindupZone = b.bounceCount === 1 || b.z >= engine.getRenderState().player.z - 3.6;
+      if (inWindupZone && swingStartEmittedForBounceKey !== bounceKey) {
+        swingStartEmittedForBounceKey = bounceKey;
+        const ballOnLeft = b.x < -0.4;
+        const wing: StrokeWing = ballOnLeft
+          ? rng() < Math.max(0, profile.forehandPref - 0.55)
+            ? 'forehand'
+            : 'backhand'
+          : 'forehand';
+        const armZone: ArmZone = b.x < -1.6 ? 'left' : b.x > 1.6 ? 'right' : 'center';
+        const previewShot = sampleWeighted(profile.shotTypeWeights, rng);
+        engine.handlePlayerSwingStart({
+          earlyGuess: previewShot,
+          confidence: 0.78,
+          backswing: previewShot === 'dropshot' ? 0.28 : wing === 'forehand' ? 0.82 : 0.55,
+          initialSpeed: previewShot === 'dropshot' ? 0.25 : profile.avgPower,
+          wing,
+          armZone,
+        });
+      }
+
       // Wait until the ball is in the natural hitting zone (after bounce peak or near player depth)
       const inStrikeZone =
         (b.bounceCount === 1 && (b.z >= engine.getRenderState().player.z - 2.2 || b.vy < 0.8)) ||
         (b.bounceCount === 0 && b.z >= engine.getRenderState().player.z - 1.2);
-      const bounceKey = engine.getRenderState().score.pointIndex * 1000 + engine.getCurrentRallyShotCount();
       if (inStrikeZone && swingAttemptedForBounceKey !== bounceKey) {
         swingAttemptedForBounceKey = bounceKey;
 

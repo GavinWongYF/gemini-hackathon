@@ -1,49 +1,29 @@
 # Team & Multi-Chat Sync Contract (Canonical)
 
-> **Source of truth** for Ethan's parallel Antigravity sessions, Akhil (3D Scene / Blender), and Felix & Gavin (Agentic System WebSocket Backend).
-> Aligned against Notion **API Design (Draft 2)**, **API Design examples: tennis and CS:GO**, and **What the agent side needs from the game** (Nov 21, 11:55 AM ET).
+> **Source of truth:** Notion (**[Gemini NYC Hackathon](https://app.notion.com/p/41e544411a7d80bfb622db9e3c244fc9)** / `Docs` DB) + GitHub (`origin/main`: `https://github.com/GavinWongYF/gemini-hackathon`).
+> Every parallel Antigravity chat in this workspace MUST read this file + `git status -s` before editing shared contracts or pushing.
 
 ---
 
-## 1. Active Folder Ownership (Zero Merge Conflicts)
+## 1. Folder & Multi-Chat Ownership (Zero Collisions)
 
-| Owner / Session | Owned Files & Folders | Status |
-|---|---|---|
-| **Ethan (Hardware Chat `d37b0bad`)** | `hardware/m5_tennis_imu/`, `client/src/hardware/*`, `client/src/App.tsx` (test view) | Building M5 ESP32 IMU + MediaPipe `WebcamArmTracker` + `HardwareInputManager` |
-| **Ethan (Integration / Engine / AI / Dashboard)** | `shared/agentProtocol.ts`, `client/src/ai/*`, `client/src/engine/*`, `client/src/dashboard/*` | `shared/agentProtocol.ts`, `client/src/ai/OpponentBrain.ts`, `client/src/ai/AgentClient.ts` wired to Felix & Gavin Draft 2 |
-| **Akhil (3D Scene & Blender)** | `blender/`, `client/public/models/`, `client/src/scene/*` | Built in Notion zip; ready to push to `main` |
-| **Felix & Gavin (Agentic Backend)** | `agents/` (`agents/server/`, `agents/sim/`, `agents/eval/`, `agents/demo/tennis-screen/`, `agents/sdk/`, `agents/docs/api.md`) | WebSocket server on `ws://localhost:8000/ws` (Draft 2 + 12:00 PM additions) |
-
----
-
-## 2. Locked Interface with Felix & Gavin (`shared/agentProtocol.ts`)
-
-**Do NOT use the old REST `CONTRACTS.md` (`/session/init`, `/telemetry/tick`, `/round/adapt`).**
-Everything uses **Felix & Gavin's Notion API Design Draft 2** (`ws://localhost:8000/ws`):
-
-- **7 WebSocket messages:** `setup`, `ready`, `event`, `frames`, `round_end`, `player_read`, `strategy_update` (`quick` & `full`).
-- **Real Tennis `setup` names (replacing Notion placeholders):**
-  - `lists.zone`: `["left_short", "middle_short", "right_short", "left_deep", "middle_deep", "right_deep"]`
-  - `lists.human_shot_type`: `["topspin", "slice", "dropshot"]` *(matches `ImuSwingClassifier` + `HardwareInputManager`)*
-  - `lists.ai_shot_type`: `["topspin", "flat", "slice", "dropshot", "lob"]`
-  - `lists.arm_zone`: `["left", "center", "right"]` *(matches `WebcamArmTracker`)*
-  - `npcs.opponent.decisions`: `shot_type`, `aim` (`left_deep|middle_deep|right_deep|left_short|right_short`), `position` (`middle_deep|left_deep|right_deep|middle_short`)
-  - `settings.opponent_speed`: `min: 0.65`, `max: 1.25`, `now: 0.85` *(controls opponent court movement speed ONLY, never ball speed)*
-- **Single decision point (`pick()`):** All opponent shot/aim/position choices go through `OpponentBrain.decideShot()` -> `pick()` in `client/src/ai/OpponentBrain.ts`. Once Felix & Gavin push `agents/sdk/js/pick.js` + `agents/sdk/test-vectors.json`, we will import `agents/sdk/js/pick.js` directly (or verify against all 36 test vectors) so there is strictly one `pick()`.
-- **Clean scaffold:** Empty `agentic-api/` folder removed; Felix & Gavin own `agents/`.
-- **Between-round swaps only:** `OpponentBrain.queueStrategyUpdate()` buffers updates; `applyPendingBetweenRounds()` applies them between points (never mid-rally).
-- **Webcam `player_cam` frames:** `hardwareInput.webcam.capturePlayerCamJpeg(384)` already outputs unmirrored 384px base64 JPEGs ready for `AgentClient.sendFrames()`.
+| Owner / Parallel Chat | Strictly Owned Files & Folders | Current State |
+| --- | --- | --- |
+| **Ethan — Hardware Chat (`d37b0bad`)** | `client/src/hardware/*` (`firmware/`, `ble_bridge.py`, `ImuSwingClassifier.ts`, `WebcamArmTracker.ts`, `HardwareInputManager.ts`, `HardwareTestView.tsx`) | Live 100 Hz BLE/Serial M5 IMU + universal zero-training shot classifier + cross-body webcam arm tracker + `onSwingStart` / `onSwing` |
+| **Ethan — Engine & AI Chat (`0f243a7a`)** | `shared/agentProtocol.ts`, `client/src/ai/*` (`AgentClient.ts`, `OpponentBrain.ts`), `client/src/engine/*` (`BallFlightEngine.ts`, `TennisMatchEngine.ts`, `PracticeRunner.ts`, `runPracticeCli.ts`), `TEAM_SYNC.md` | Complete Draft 2 + 12:45 PM WS protocol, single `pick()` (`shot_type`, `aim`, `position`, `anticipate`), fixed-1/60s physics, >2000x real-time headless `practice_run` runner |
+| **Ethan — Dashboard / App Shell** | `client/src/dashboard/*`, `client/src/App.tsx` | Pause replay / heatmap / observations overlay (coordinate before editing `App.tsx` or `shared/contracts.ts`) |
+| **Akhil (Teammate — DO NOT EDIT)** | `blender/`, `client/public/models/`, `client/src/scene/*` | 3D stadium, rigged athletes, R3F `CourtScene` reading `matchStateRef.current` (`MatchRenderState`) |
+| **Felix & Gavin (Teammates — DO NOT EDIT)** | `agents/` (`server/`, `sim/`, `eval/`, `demo/tennis-screen/`, `sdk/`, `docs/`) | End-to-end Gemini 4 Carbon/Neon + Decision 1 WS backend (`ws://localhost:8000/ws`, viewer `/screen/`) |
 
 ---
 
-## 3. Two Remaining Action Items for Full End-to-End Fit
+## 2. Locked Protocol Rules With Felix & Gavin (`shared/agentProtocol.ts`)
 
-1. **For Ethan's `client/src/engine/` (next step):**
-   - Keep `client/src/engine/` **100% pure TypeScript (no React / Three.js / DOM)** so the exact same ball physics + rally + `OpponentBrain` runs:
-     - at 60 FPS in the browser driving Akhil's `matchStateRef.current` (`MatchRenderState`), AND
-     - headlessly in Node (`mode: "practice"`, no screen, >100× real-time) with a configurable scripted player (e.g., `"70% forehand, weak backhand"`) for Felix & Gavin's onboarding + proof benchmark (25% of judging).
-   - Ensure opponent shot choices (`shot_type` + `aim`) have a **≥25% return-difficulty gap** against player weaknesses (e.g., wide `left_deep` slices / short `dropshot`s noticeably harder for a weak-backhand / deep-baseline player).
-2. **For Akhil (`client/src/scene/CourtScene.tsx`):**
-   - Push `client/src/scene/`, `client/public/models/`, and `blender/` to `main`.
-   - Add `preserveDrawingBuffer: true` to `<Canvas gl={{ ... }} />` in `CourtScene.tsx` (or expose a `captureCourtJpeg(384)` helper) so `frames.views.court` doesn't capture blank black frames.
-   - Note that `PlayerControlState` in `shared/contracts.ts` was updated for the stationary M5 IMU + Webcam Arm Tracker (`arm.armZone`, `arm.wing`, `imuConnected`); Akhil's `CourtScene.tsx` only reads `MatchRenderState` (which is **100% unchanged**), so his 3D scene stays completely drop-in compatible!
+1. **Identical `setup` across `practice` and `live`:** `createTennisSetup()` sends the **exact same** `views`, `practice`, `events`, `facts`, `npcs`, and `settings` in both `mode: "practice"` and `mode: "live"` so `agents/server/` reuses the cached Carbon design immediately.
+2. **Events declared & emitted:**
+   - `swing_start` (`by: "player"`, ~85–160 ms before contact): `early_guess`, `confidence`, `backswing`, `initial_speed`, `side`, `arm_zone`.
+   - `anticipate` (`by: "opponent"`): `picked: { anticipate }`, `by_rule`, `data: { move }` (`stay | lean_left | lean_right | move_in | move_back`).
+   - `shot` (`by: "player" | "opponent"`, once at ball contact): `rally`, `side`, `arm_zone`, `shot_type`, `power` (`0..1`), `rotation` (`-1..1`), `angle` (`-1..1`), `confidence` (`0..1`), `timing` (`early | on_time | late`), `quality` (`0..1`), `from`, `other_position`, `lands`, `result` (`in | out | net`).
+   - `missed_swing` (`by: "player"`): `side`, `arm_zone`, `shot_type`, `power`, `reason` (`unreachable | too_early | too_late`).
+3. **One `pick()`:** Currently mirrored in `shared/agentProtocol.ts`; as soon as Felix pushes `agents/`, import `agents/sdk/js/pick.js` (and run `agents/sdk/test-vectors.json`) so both sides run one `pick()`.
+4. **`opponent_speed` (`0.65..1.25`, default `0.85`):** Controls opponent court movement speed **only** (never ball speed).

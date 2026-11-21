@@ -3,6 +3,7 @@ import type {
   HumanShotType,
   PlayerControlState,
   PlayerSwingEvent,
+  PlayerSwingStartEvent,
   RawImuSample,
   StrokeWing,
 } from '@shared/contracts';
@@ -13,6 +14,7 @@ import {
 import { WebcamArmTracker } from './WebcamArmTracker';
 
 type SwingListener = (evt: PlayerSwingEvent) => void;
+type SwingStartListener = (evt: PlayerSwingStartEvent) => void;
 type StateListener = (state: PlayerControlState) => void;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -112,6 +114,7 @@ export class HardwareInputManager {
   };
 
   private swingListeners = new Set<SwingListener>();
+  private swingStartListeners = new Set<SwingStartListener>();
   private stateListeners = new Set<StateListener>();
   private keys = new Set<string>();
 
@@ -130,7 +133,6 @@ export class HardwareInputManager {
   private lastImuPacketMs = 0;
   private imuPacketTimestamps: number[] = [];
   private started = false;
-  private trainingTarget: HumanShotType | null = null;
 
   start(wsUrl?: string) {
     if (this.started || typeof window === 'undefined') return;
@@ -217,6 +219,12 @@ export class HardwareInputManager {
     return () => this.swingListeners.delete(listener);
   }
 
+  /** Fires ~100-160ms BEFORE `onSwing` at swing onset so OpponentBrain can `anticipate`. */
+  onSwingStart(listener: SwingStartListener): () => void {
+    this.swingStartListeners.add(listener);
+    return () => this.swingStartListeners.delete(listener);
+  }
+
   /** Fires on connection/mode changes (NOT on every 100 Hz packet). */
   onStateChange(listener: StateListener): () => void {
     this.stateListeners.add(listener);
@@ -258,21 +266,6 @@ export class HardwareInputManager {
 
   updateClassifierConfig(partial: Partial<ImuClassifierConfig>) {
     this.classifier.updateConfig(partial);
-  }
-
-  setTrainingTarget(target: HumanShotType | null) {
-    this.trainingTarget = target;
-    this.notifyState();
-  }
-
-  getTrainingTarget(): HumanShotType | null {
-    return this.trainingTarget;
-  }
-
-  clearShotTraining() {
-    this.trainingTarget = null;
-    this.classifier.clearTraining();
-    this.notifyState();
   }
 
   triggerManualSwing(overrides?: Partial<Omit<PlayerSwingEvent, 'id' | 'timestampMs'>>) {
@@ -581,12 +574,50 @@ export class HardwareInputManager {
     this.state.rawImu = sample;
 
     const swing = this.classifier.ingest(sample, now);
+    const early = this.classifier.consumeEarlySwingGuess();
     this.state.gyro = this.classifier.getLatestReading();
     this.state.calibration = this.classifier.getCalibrationPhase();
     this.state.calibrationProgress = this.classifier.getCalibrationProgress();
 
     if (!wasConnected) {
       this.notifyState();
+    }
+
+    if (early) {
+      const pre = this.webcam.getPreSwingTakeback(early.swingStartMs);
+      const earlyResolved = this.classifier.resolveShot(
+        {
+          swingStartMs: early.swingStartMs,
+          swingEndMs: early.nowMs,
+          power: early.initialSpeed,
+          angle: this.state.gyro.angle,
+          preFaceOpen: early.preFaceOpen,
+          earlyVerticalG: early.earlyVerticalG,
+          peakAccelG: early.peakAccelG,
+          peakGyroDps: early.peakGyroDps,
+          shotType: 'topspin',
+          rotation: 0,
+          confidence: 0.65,
+        },
+        pre.wing,
+        pre.deltaArmY,
+        pre.hasWebcamData,
+      );
+      const backswing = pre.hasWebcamData
+        ? clamp(pre.backswing * 0.7 + early.imuBackswing * 0.3, 0.1, 1)
+        : early.imuBackswing;
+      this.emitSwingStart({
+        id: this.swingCounter + 1,
+        timestampMs: Date.now(),
+        earlyGuess: earlyResolved.shotType,
+        confidence: clamp(earlyResolved.confidence * 0.88, 0.35, 0.95),
+        backswing,
+        initialSpeed: early.initialSpeed,
+        wing: pre.wing,
+        armZone: pre.armZone,
+        armX: pre.armX,
+        source,
+      });
     }
 
     if (swing) {
@@ -598,7 +629,7 @@ export class HardwareInputManager {
       const armZone = armSummary.hasWebcamData ? armSummary.armZone : armFallback.armZone;
       const armX = armSummary.hasWebcamData ? armSummary.armX : armFallback.armX;
 
-      // Refine shot type (topspin / slice / dropshot) using wing-corrected racket face + webcam ΔarmY!
+      // Universal wing-aware + webcam-fused shot classification (works for every player!)
       const resolved = this.classifier.resolveShot(
         swing,
         wing,
@@ -606,29 +637,19 @@ export class HardwareInputManager {
         armSummary.hasWebcamData,
       );
 
-      let finalShotType = resolved.shotType;
-      let finalConfidence = resolved.confidence;
-      if (this.trainingTarget) {
-        this.classifier.addTrainingExample(this.trainingTarget, resolved.features);
-        finalShotType = this.trainingTarget;
-        finalConfidence = 1.0;
-        this.trainingTarget = null;
-        this.notifyState();
-      }
-
-      this.state.shotType = finalShotType;
+      this.state.shotType = resolved.shotType;
 
       this.emitSwing({
         id: ++this.swingCounter,
         timestampMs: Date.now(),
-        shotType: finalShotType,
+        shotType: resolved.shotType,
         wing,
         armZone,
         armX,
         power: swing.power,
         rotation: resolved.rotation,
         angle: swing.angle,
-        confidence: finalConfidence,
+        confidence: resolved.confidence,
         peakAccelG: swing.peakAccelG,
         peakGyroDps: swing.peakGyroDps,
         source,
@@ -640,6 +661,10 @@ export class HardwareInputManager {
 
   private emitSwing(evt: PlayerSwingEvent) {
     for (const cb of this.swingListeners) cb(evt);
+  }
+
+  private emitSwingStart(evt: PlayerSwingStartEvent) {
+    for (const cb of this.swingStartListeners) cb(evt);
   }
 
   private notifyState() {

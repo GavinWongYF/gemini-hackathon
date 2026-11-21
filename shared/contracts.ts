@@ -133,6 +133,21 @@ export interface PlayerControlState {
 
 export type ShotTiming = 'early' | 'on_time' | 'late';
 
+export interface PlayerSwingStartEvent {
+  id: number;
+  timestampMs: number;
+  earlyGuess: HumanShotType;
+  confidence: number;
+  /** Pre-swing windup/takeback amplitude 0..1 */
+  backswing: number;
+  /** Swing onset speed in the first ~25ms (0..1) */
+  initialSpeed: number;
+  wing: StrokeWing;
+  armZone: ArmZone;
+  armX: number;
+  source: HardwareSource;
+}
+
 export interface PlayerSwingEvent {
   id: number;
   timestampMs: number;

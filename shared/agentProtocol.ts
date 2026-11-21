@@ -210,12 +210,32 @@ export const TENNIS_AI_POSITION_OPTIONS: readonly OpponentPositionChoice[] = [
   'middle_short',
 ] as const;
 
+export type OpponentAnticipateChoice =
+  | 'stay'
+  | 'lean_left'
+  | 'lean_right'
+  | 'move_in'
+  | 'move_back';
+
+export const TENNIS_AI_ANTICIPATE_OPTIONS: readonly OpponentAnticipateChoice[] = [
+  'stay',
+  'lean_left',
+  'lean_right',
+  'move_in',
+  'move_back',
+] as const;
+
 export interface TennisFacts {
   player_position: CourtZone;
   player_arm_zone: ArmZone;
   player_last_side: StrokeWing;
   player_last_shot_type: HumanShotType;
   rally_length: number;
+  swing_early_guess?: HumanShotType;
+  swing_backswing?: number;
+  swing_initial_speed?: number;
+  swing_side?: StrokeWing;
+  swing_arm_zone?: ArmZone;
   [key: string]: string | number | boolean | undefined;
 }
 
@@ -248,6 +268,13 @@ export const DEFAULT_TENNIS_BEHAVIOUR: BehaviourJson = {
           right_deep: { base: 0.1 },
           middle_short: { base: 0.1 },
         },
+        anticipate: {
+          stay: { base: 0.68 },
+          lean_left: { base: 0.08 },
+          lean_right: { base: 0.08 },
+          move_in: { base: 0.08 },
+          move_back: { base: 0.08 },
+        },
       },
       rules: [],
     },
@@ -271,7 +298,10 @@ export interface TennisSetupOptions {
  */
 export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
   const mode = opts.mode ?? 'live';
-  const includePractice = opts.includePractice ?? mode === 'practice';
+  // Per Felix & Gavin ("Agent side build 1: it runs end to end", 12:40 PM):
+  // Send the EXACT SAME `setup` (including `views` and `practice`) in both `practice` and `live`
+  // modes so the server's cached design from practice mode is reused immediately in live mode!
+  const includePractice = opts.includePractice ?? true;
   return {
     type: 'setup',
     match_id: opts.matchId,
@@ -327,10 +357,49 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
               middle_short: 'Step forward toward the net to take the next ball early.',
             },
           },
+          anticipate: {
+            when: 'The moment the player starts a swing (~100-160ms before ball contact).',
+            options: {
+              stay: 'Hold current position until the ball is hit.',
+              lean_left: 'Start moving early toward screen-left.',
+              lean_right: 'Start moving early toward screen-right.',
+              move_in: 'Start moving forward toward the net to cover a short ball.',
+              move_back: 'Start moving deeper behind the baseline.',
+            },
+          },
         },
       },
     },
     events: {
+      swing_start: {
+        about: 'The player has started a swing (~100-160ms before ball contact).',
+        fields: {
+          early_guess: 'human_shot_type',
+          confidence: {
+            min: 0,
+            max: 1,
+            about: 'How sure the IMU+pose classifier is of early_guess.',
+          },
+          backswing: {
+            min: 0,
+            max: 1,
+            about: 'Pre-swing windup/takeback size (0 = compact/no windup, 1 = full wide windup).',
+          },
+          initial_speed: {
+            min: 0,
+            max: 1,
+            about: 'Swing onset speed in the first 25ms (low on gentle dropshots, high on rips).',
+          },
+          side: ['forehand', 'backhand'],
+          arm_zone: 'arm_zone',
+        },
+      },
+      anticipate: {
+        about: 'The opponent reacted to the start of the player swing before contact.',
+        fields: {
+          move: ['stay', 'lean_left', 'lean_right', 'move_in', 'move_back'],
+        },
+      },
       shot: {
         about: 'Either side hit the ball (emitted once per shot at racket-ball contact with solved landing zone and result).',
         fields: {
@@ -383,14 +452,24 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
       player_last_side: ['forehand', 'backhand'],
       player_last_shot_type: 'human_shot_type',
       rally_length: 'number',
+      swing_early_guess: 'human_shot_type',
+      swing_backswing: {
+        min: 0,
+        max: 1,
+        about: 'How big the player backswing was at swing_start.',
+      },
+      swing_initial_speed: {
+        min: 0,
+        max: 1,
+        about: 'How fast the player swing started in the first 25ms.',
+      },
+      swing_side: ['forehand', 'backhand'],
+      swing_arm_zone: 'arm_zone',
     },
-    views:
-      mode === 'practice'
-        ? {}
-        : {
-            court: 'The 3D game screen showing both halves of the tennis court.',
-            player_cam: 'Unmirrored webcam on the player showing upper body and racket arm.',
-          },
+    views: {
+      court: 'The 3D game screen showing both halves of the tennis court.',
+      player_cam: 'Unmirrored webcam on the player showing upper body and racket arm.',
+    },
     settings: {
       opponent_speed: {
         about:

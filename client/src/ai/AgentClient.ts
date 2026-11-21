@@ -90,8 +90,12 @@ export class AgentClient {
         ? (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_AGENT_WS_URL
         : undefined;
     this.wsUrl = opts.wsUrl ?? envUrl ?? 'ws://localhost:8000/ws';
+    const mode = opts.mode ?? 'live';
     this.forceMock = opts.forceMock ?? false;
-    this.readyTimeoutMs = opts.readyTimeoutMs ?? 4000;
+    // Per Notion API Design & 12:40 PM build notes: once connected to a live server,
+    // first-time Carbon setup can take 45-90s (and practice runs 1-2 min). If the socket
+    // fails to open (server offline), `onerror`/`onclose` falls back to mock immediately!
+    this.readyTimeoutMs = opts.readyTimeoutMs ?? (mode === 'practice' ? 180_000 : 90_000);
     this.callbacks = opts.callbacks ?? {};
     this.WebSocketCtor =
       opts.WebSocketCtor ??
@@ -101,7 +105,7 @@ export class AgentClient {
 
     this.setupMsg = createTennisSetup({
       matchId: opts.matchId ?? `tennis_${Date.now().toString(36)}`,
-      mode: opts.mode ?? 'live',
+      mode,
     });
   }
 
@@ -156,9 +160,20 @@ export class AgentClient {
         }
       }, this.readyTimeoutMs);
 
-      this.openSocket((readyMsg) => {
-        finish(readyMsg);
-      });
+      this.openSocket(
+        (readyMsg) => {
+          finish(readyMsg);
+        },
+        () => {
+          // Server is unreachable (connection refused) -> switch to offline mock right away
+          if (!this.readyReceived) {
+            this.setStatus('mock');
+            const fallback = this.buildMockReady();
+            this.callbacks.onReady?.(fallback);
+            finish(fallback);
+          }
+        },
+      );
     });
   }
 
@@ -255,15 +270,17 @@ export class AgentClient {
     this.sendJson(msg);
   }
 
-  private openSocket(onFirstReady?: (msg: AgentReadyMessage) => void) {
+  private openSocket(onFirstReady?: (msg: AgentReadyMessage) => void, onInitialConnectFail?: () => void) {
     if (!this.WebSocketCtor) return;
     this.setStatus('connecting');
+    let opened = false;
 
     try {
       const ws = new this.WebSocketCtor(this.wsUrl);
       this.ws = ws;
 
       ws.onopen = () => {
+        opened = true;
         this.setStatus('connected');
         // Per Notion API Design: send `setup` on connect AND on reconnect with same `match_id`
         this.sendJson(this.setupMsg);
@@ -300,6 +317,9 @@ export class AgentClient {
 
       ws.onclose = () => {
         if (this.closedByUser) return;
+        if (!opened) {
+          onInitialConnectFail?.();
+        }
         if (this.status === 'connected' || this.status === 'connecting') {
           this.setStatus(this.readyReceived ? 'disconnected' : 'mock');
         }

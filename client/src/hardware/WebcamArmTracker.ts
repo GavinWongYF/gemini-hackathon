@@ -109,6 +109,48 @@ export class WebcamArmTracker {
   }
 
   /**
+   * Captures pre-swing takeback state at `swing_start` (~100-160ms before ball contact):
+   * wing, armZone, armX, and normalized backswing amplitude (0..1).
+   */
+  getPreSwingTakeback(swingStartMs: number): {
+    wing: StrokeWing;
+    armZone: ArmZone;
+    armX: number;
+    backswing: number;
+    deltaArmY: number;
+    hasWebcamData: boolean;
+  } {
+    const summary = this.getSwingArmSummary(swingStartMs, performance.now());
+    if (!summary.hasWebcamData) {
+      return {
+        wing: this.snapshot.arm.wing,
+        armZone: this.snapshot.arm.armZone,
+        armX: this.snapshot.arm.armX,
+        backswing: clamp(Math.abs(this.snapshot.arm.armX) * 0.9, 0.2, 1),
+        deltaArmY: 0,
+        hasWebcamData: false,
+      };
+    }
+    const windowPts = this.history.filter((p) => p.t >= swingStartMs - 320 && p.t <= swingStartMs + 30);
+    let minX = summary.armX;
+    let maxX = summary.armX;
+    for (const p of windowPts) {
+      if (p.armX < minX) minX = p.armX;
+      if (p.armX > maxX) maxX = p.armX;
+    }
+    const takebackSpan = maxX - minX;
+    const backswing = clamp(Math.abs(summary.armX) * 0.65 + takebackSpan * 0.75, 0.12, 1);
+    return {
+      wing: summary.wing,
+      armZone: summary.armZone,
+      armX: summary.armX,
+      backswing,
+      deltaArmY: summary.deltaArmY,
+      hasWebcamData: true,
+    };
+  }
+
+  /**
    * Resolves true Forehand vs Backhand & vertical swing path for a swing that just ended.
    * Uses the pre-swing takeback position (120–320 ms before swingEndMs) + swing travel
    * direction so follow-through crossing the centerline NEVER flips forehand <-> backhand!

@@ -16,6 +16,7 @@ import {
   type MatchRenderState,
   type PlayerControlState,
   type PlayerSwingEvent,
+  type PlayerSwingStartEvent,
   type RecordedShot,
   type ShotTiming,
   type StrategyVisualCue,
@@ -149,6 +150,7 @@ export class TennisMatchEngine {
   private opponentTargetPos: { x: number; z: number } = { x: 0, z: COURT.AI_START_Z };
   private opponentHitScheduled = false;
   private opponentReactionDelaySec = 0;
+  private opponentAnticipatedMove: string = 'stay';
   private lastHumanShotQuality = 0.7;
   private lastOpponentShot: LastOpponentShotContext | null = null;
 
@@ -310,6 +312,73 @@ export class TennisMatchEngine {
   }
 
   /**
+   * Handles `swing_start` (~100-160ms BEFORE ball contact):
+   *  1. Sends player `swing_start` event to agents (so they learn tells vs actual `shot`).
+   *  2. Immediately calls `brain.decideAnticipation()` via `pick("opponent", "anticipate", ...)`
+   *     so the opponent starts moving during the windup with zero cloud latency!
+   */
+  handlePlayerSwingStart(
+    swingStart: Pick<
+      PlayerSwingStartEvent,
+      'earlyGuess' | 'confidence' | 'backswing' | 'initialSpeed' | 'wing' | 'armZone'
+    >,
+  ) {
+    if (this.renderState.phase !== 'rally' || this.hitter !== 'ai' || !this.ballEngine.state.active) {
+      return;
+    }
+
+    this.sink.onAgentEvent?.({
+      name: 'swing_start',
+      round: this.renderState.score.pointIndex,
+      t: round2(this.matchTimeSec),
+      by: 'player',
+      data: {
+        early_guess: swingStart.earlyGuess,
+        confidence: round2(swingStart.confidence),
+        backswing: round2(swingStart.backswing),
+        initial_speed: round2(swingStart.initialSpeed),
+        side: swingStart.wing,
+        arm_zone: swingStart.armZone,
+      },
+    });
+
+    const facts: TennisFacts = {
+      ...this.buildFacts(),
+      swing_early_guess: swingStart.earlyGuess,
+      swing_backswing: round2(swingStart.backswing),
+      swing_initial_speed: round2(swingStart.initialSpeed),
+      swing_side: swingStart.wing,
+      swing_arm_zone: swingStart.armZone,
+    };
+
+    const ant = this.brain.decideAnticipation(facts);
+    this.opponentAnticipatedMove = ant.move;
+
+    // Shift opponent target position immediately during player windup!
+    const cur = this.opponentTargetPos;
+    if (ant.move === 'lean_left') {
+      this.opponentTargetPos = { x: clamp(cur.x - 2.6, -4.4, 4.4), z: cur.z };
+    } else if (ant.move === 'lean_right') {
+      this.opponentTargetPos = { x: clamp(cur.x + 2.6, -4.4, 4.4), z: cur.z };
+    } else if (ant.move === 'move_in') {
+      this.opponentTargetPos = { x: cur.x, z: -4.8 };
+      this.renderState.opponent.strategyVisualCue = 'net_rush';
+    } else if (ant.move === 'move_back') {
+      this.opponentTargetPos = { x: cur.x, z: -10.6 };
+    }
+
+    this.sink.onAgentEvent?.({
+      name: 'anticipate',
+      round: this.renderState.score.pointIndex,
+      t: round2(this.matchTimeSec),
+      by: 'opponent',
+      picked: { anticipate: ant.move },
+      by_rule: ant.byRule ? ['anticipate'] : [],
+      data: { move: ant.move },
+    });
+  }
+
+  /**
    * Handles a discrete player swing (from M5 IMU, Keyboard Space, or Headless Scripted Player).
    * Returns true if the swing connected with the ball.
    */
@@ -464,8 +533,11 @@ export class TennisMatchEngine {
     this.opponentHitScheduled = false;
     this.pendingOpponentDecision = null;
     this.lastHumanShotQuality = assessment.quality;
-    // Human winners hit cleanly give the opponent realistic reaction delay (so position shading matters!)
-    this.opponentReactionDelaySec = clamp(0.18 + assessment.quality * 0.24, 0.15, 0.45);
+    // If the opponent already committed to an early `anticipate` read, cut post-contact reaction delay!
+    const baseDelay = clamp(0.18 + assessment.quality * 0.24, 0.15, 0.45);
+    this.opponentReactionDelaySec =
+      this.opponentAnticipatedMove !== 'stay' ? Math.max(0.04, baseDelay * 0.35) : baseDelay;
+    this.opponentAnticipatedMove = 'stay';
     this.renderState.ball.landingMarker = null;
 
     const fromZone = armZoneToPlayerCourtZone(swing.armZone, p.z);
