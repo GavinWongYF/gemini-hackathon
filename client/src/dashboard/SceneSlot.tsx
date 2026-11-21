@@ -66,28 +66,6 @@ function FallbackBroadcastCourt({
       if (!ctx) return;
       const arcs = replayMode ? replayArcs : matchStateRef.current.replayArcs;
       drawTacticalCourt(ctx, w, h, matchStateRef.current, arcs);
-
-      // Draw glowing bounce heatmap directly on the court during replayMode (never in a separate modal!)
-      if (replayMode && arcs.length > 0) {
-        const padX = w * 0.2;
-        const padY = h * 0.08;
-        const courtW = w - padX * 2;
-        const courtH = h - padY * 2;
-        const toX = (x: number) => w * 0.5 + (x / 5.5) * (courtW * 0.5);
-        const toY = (z: number) => h * 0.5 + (z / 11.5) * (courtH * 0.5);
-        for (const shot of arcs) {
-          if (!shot.bouncePos) continue;
-          const bx = toX(shot.bouncePos.x);
-          const by = toY(shot.bouncePos.z);
-          const grad = ctx.createRadialGradient(bx, by, 2, bx, by, 24);
-          grad.addColorStop(0, shot.actor === 'human' ? 'rgba(56,189,248,0.75)' : 'rgba(251,113,133,0.75)');
-          grad.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(bx, by, 24, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
     };
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);

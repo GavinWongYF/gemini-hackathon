@@ -1,9 +1,9 @@
-// Three-Column Live Match View (aligned to Notion Section 9 @ 1:20 PM + Akhil's 3D CourtScene)
-//   - Left narrow slot:  `<npc-panel side="left">` (Decisions API short loop from :8000/screen/panels.js,
-//                        with clean offline fallback when backend isn't running)
-//   - Middle wide slot:  `<SceneSlot>` (Akhil's 3D `CourtScene` — NEVER covered by a modal;
-//                        3D trajectories & bounce heatmap render directly on the court!)
-//   - Right narrow slot: `<npc-panel side="right">` (Neon longer loop: Noticed / Plan / Checks)
+// Complete Live Match Integration View
+// Wires together:
+//   - Ethan's M5 + Webcam `hardwareInput` (`getState`, `onSwingStart`, `onSwing`, `capturePlayerCamJpeg`)
+//   - Ethan's pure-TS `TennisMatchEngine` + `OpponentBrain` (`pick()`)
+//   - Felix & Gavin's `AgentClient` (`ws://localhost:8000/ws`, 1Hz `frames`, `event`, `round_end`)
+//   - Akhil's `CourtScene` via `<SceneSlot>` (auto-upgrades to 3D the instant Akhil pushes `scene/` + `.glb`s!)
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type {
@@ -20,21 +20,9 @@ import { captureCourtJpeg } from './CourtFrameCapture';
 import { PauseDashboard } from './PauseDashboard';
 import { SceneSlot } from './SceneSlot';
 
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace JSX {
-    interface IntrinsicElements {
-      'npc-panel': React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & { side?: 'left' | 'right' },
-        HTMLElement
-      >;
-    }
-  }
-}
-
 export const LiveMatchView: React.FC = () => {
   const matchStateRef = useRef<MatchRenderState>(createInitialMatchRenderState(6));
-  const sceneContainerRef = useRef<HTMLDivElement>(null);
+  const sceneContainerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<TennisMatchEngine | null>(null);
   const agentRef = useRef<AgentClient | null>(null);
 
@@ -46,15 +34,6 @@ export const LiveMatchView: React.FC = () => {
   const [latestUpdate, setLatestUpdate] = useState<AgentStrategyUpdateMessage | null>(null);
   const [recentShots, setRecentShots] = useState<RecordedShot[]>([]);
   const [lastRuleFired, setLastRuleFired] = useState<string | null>(null);
-  const [customPanelsLoaded, setCustomPanelsLoaded] = useState<boolean>(
-    () => typeof customElements !== 'undefined' && Boolean(customElements.get('npc-panel')),
-  );
-
-  useEffect(() => {
-    if (typeof customElements !== 'undefined' && !customElements.get('npc-panel')) {
-      void customElements.whenDefined('npc-panel').then(() => setCustomPanelsLoaded(true));
-    }
-  }, []);
 
   useEffect(() => {
     hardwareInput.start();
@@ -108,6 +87,7 @@ export const LiveMatchView: React.FC = () => {
     });
     engineRef.current = engine;
 
+    // Start play immediately (uses default_behaviour until `ready` arrives or mock kicks in)
     engine.startMatch();
     engine.syncToRenderState(matchStateRef.current);
     setPhase(engine.getRenderState().phase);
@@ -138,6 +118,7 @@ export const LiveMatchView: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
 
+    // 60 FPS simulation loop + 1 Hz `frames` sender (`court` + `player_cam`)
     let lastTime = performance.now();
     let lastFrameSentMs = 0;
     let rafId = 0;
@@ -151,6 +132,7 @@ export const LiveMatchView: React.FC = () => {
       engine.step(dt);
       engine.syncToRenderState(matchStateRef.current);
 
+      // Send ~1 Hz 384px JPEG `frames` (`court` + `player_cam`) during active rallies
       if (engine.getRenderState().phase === 'rally' && now - lastFrameSentMs >= 1000) {
         lastFrameSentMs = now;
         const views: Record<string, { mime_type: 'image/jpeg'; data: string }> = {};
@@ -214,136 +196,29 @@ export const LiveMatchView: React.FC = () => {
     }
   }, []);
 
-  const topHabits = latestRead
-    ? Object.entries(latestRead.values)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-    : [];
-  const latestCheck = latestUpdate?.checks?.[0];
-  const speedAdjust =
-    typeof latestUpdate?.settings?.opponent_speed === 'number'
-      ? latestUpdate.settings.opponent_speed
-      : null;
-
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '250px minmax(0, 1fr) 260px',
-        width: '100%',
-        height: '100%',
-        background: '#090d16',
-        color: '#e2e8f0',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Left Narrow Slot: Felix & Gavin's `<npc-panel side="left">` */}
-      <aside
-        style={{
-          borderRight: '1px solid rgba(148,163,184,0.16)',
-          padding: 14,
-          overflowY: 'auto',
-          background: '#0b1120',
-        }}
-      >
-        <npc-panel side="left" />
-        {!customPanelsLoaded && agentStatus !== 'connected' && (
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 10 }}>
-              Player Read
-            </div>
-            {topHabits.map(([key, val]) => (
-              <div key={key} style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 12, color: '#e2e8f0', marginBottom: 4 }}>
-                  {valueLabels[key]?.label ?? key}
-                </div>
-                <div style={{ height: 5, background: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
-                  <div
-                    style={{
-                      width: `${Math.round(val * 100)}%`,
-                      height: '100%',
-                      background: '#38bdf8',
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-            {latestRead?.why && (
-              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 12, lineHeight: 1.4 }}>
-                {latestRead.why}
-              </div>
-            )}
-          </div>
-        )}
-      </aside>
-
-      {/* Middle Wide Slot: Akhil's 3D Court (NEVER covered by a modal!) */}
-      <main style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-        <SceneSlot
-          containerRef={sceneContainerRef}
-          matchStateRef={matchStateRef}
-          replayMode={phase === 'demo_pause'}
-          replayArcs={recentShots}
-          onCanvasClick={handleCanvasClick}
-        />
-        <PauseDashboard
-          score={score}
-          phase={phase}
-          agentStatus={agentStatus}
-          strategyVersion={latestUpdate?.version ?? null}
-          lastRuleFired={lastRuleFired}
-          onResume={handleResume}
-          onRestart={handleRestart}
-          onTogglePause={handleTogglePause}
-        />
-      </main>
-
-      {/* Right Narrow Slot: Felix & Gavin's `<npc-panel side="right">` */}
-      <aside
-        style={{
-          borderLeft: '1px solid rgba(148,163,184,0.16)',
-          padding: 14,
-          overflowY: 'auto',
-          background: '#0b1120',
-        }}
-      >
-        <npc-panel side="right" />
-        {!customPanelsLoaded && agentStatus !== 'connected' && latestUpdate && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', marginBottom: 6 }}>
-                Noticed
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.45 }}>
-                {latestUpdate.observations.slice(0, 2).map((line, i) => (
-                  <li key={i} style={{ marginBottom: 4 }}>{line}</li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#fb7185', textTransform: 'uppercase', marginBottom: 6 }}>
-                Plan
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.45 }}>
-                {latestUpdate.plan.slice(0, 2).map((line, i) => (
-                  <li key={i} style={{ marginBottom: 4 }}>{line}</li>
-                ))}
-              </ul>
-            </div>
-            {latestCheck && (
-              <div style={{ fontSize: 12, color: latestCheck.held ? '#86efac' : '#fca5a5' }}>
-                Said &ldquo;{latestCheck.said}&rdquo; — {latestCheck.held ? 'held' : "didn't hold"}
-              </div>
-            )}
-            {speedAdjust !== null && (
-              <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                Fairness pace: {speedAdjust.toFixed(2)}×
-              </div>
-            )}
-          </div>
-        )}
-      </aside>
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#0d1829' }}>
+      <SceneSlot
+        containerRef={sceneContainerRef}
+        matchStateRef={matchStateRef}
+        replayMode={phase === 'demo_pause'}
+        replayArcs={recentShots}
+        onCanvasClick={handleCanvasClick}
+      />
+      <PauseDashboard
+        score={score}
+        phase={phase}
+        agentStatus={agentStatus}
+        valueLabels={valueLabels}
+        latestRead={latestRead}
+        latestUpdate={latestUpdate}
+        recentShots={recentShots}
+        matchStateRef={matchStateRef}
+        lastRuleFired={lastRuleFired}
+        onResume={handleResume}
+        onRestart={handleRestart}
+        onTogglePause={handleTogglePause}
+      />
     </div>
   );
 };
