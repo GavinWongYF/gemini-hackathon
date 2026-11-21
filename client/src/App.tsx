@@ -3,83 +3,61 @@ import { HardwareTestView } from './hardware/HardwareTestView';
 import { LiveMatchView } from './dashboard/LiveMatchView';
 
 export const App: React.FC = () => {
-  const [tab, setTab] = useState<'match' | 'hardware'>('match');
+  const [tab, setTab] = useState<'hardware' | 'match'>('hardware');
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#f8f9fa' }}>
-      <header
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div
         style={{
-          height: 48,
-          flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 20px',
-          background: '#ffffff',
-          borderBottom: '1px solid #e3e3e3',
+          padding: '6px 14px',
+          background: '#0b1120',
+          borderBottom: '1px solid rgba(148,163,184,0.18)',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
           zIndex: 40,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: '#1f1f1f', letterSpacing: '-0.01em' }}>
-            Tennis
-          </span>
-          <span style={{ fontSize: 13, color: '#5f6368' }}>
-            Adaptive Opponent
-          </span>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>
+          🎾 Adaptive AI Tennis
         </div>
-
-        <nav
-          aria-label="View mode"
-          style={{
-            display: 'inline-flex',
-            background: '#f1f3f4',
-            padding: 3,
-            borderRadius: 999,
-            gap: 2,
-          }}
-        >
+        <div style={{ display: 'flex', gap: 6 }}>
           <button
-            type="button"
-            onClick={() => setTab('match')}
-            style={{
-              background: tab === 'match' ? '#ffffff' : 'transparent',
-              color: tab === 'match' ? '#1f1f1f' : '#5f6368',
-              boxShadow: tab === 'match' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-              border: 'none',
-              borderRadius: 999,
-              padding: '5px 14px',
-              fontSize: 13,
-              fontWeight: 500,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            Match
-          </button>
-          <button
-            type="button"
             onClick={() => setTab('hardware')}
             style={{
-              background: tab === 'hardware' ? '#ffffff' : 'transparent',
-              color: tab === 'hardware' ? '#1f1f1f' : '#5f6368',
-              boxShadow: tab === 'hardware' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-              border: 'none',
-              borderRadius: 999,
-              padding: '5px 14px',
-              fontSize: 13,
-              fontWeight: 500,
-              fontFamily: 'inherit',
+              background: tab === 'hardware' ? '#2563eb' : 'rgba(30,41,59,0.8)',
+              color: '#f8fafc',
+              border: '1px solid rgba(148,163,184,0.25)',
+              borderRadius: 6,
+              padding: '4px 11px',
+              fontSize: 12,
+              fontWeight: 600,
               cursor: 'pointer',
             }}
           >
-            Hardware
+            Hardware & Calibration
           </button>
-        </nav>
-      </header>
+          <button
+            onClick={() => setTab('match')}
+            style={{
+              background: tab === 'match' ? '#2563eb' : 'rgba(30,41,59,0.8)',
+              color: '#f8fafc',
+              border: '1px solid rgba(148,163,184,0.25)',
+              borderRadius: 6,
+              padding: '4px 11px',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Live Match + AI Dashboard
+          </button>
+        </div>
+      </div>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        {tab === 'match' ? <LiveMatchView /> : <HardwareTestView />}
+        {tab === 'hardware' ? <HardwareTestView /> : <LiveMatchView />}
       </div>
     </div>
   );
