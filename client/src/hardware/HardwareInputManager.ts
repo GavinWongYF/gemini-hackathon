@@ -10,7 +10,9 @@ import type {
 import {
   ImuSwingClassifier,
   type ImuClassifierConfig,
+  type RawClassifiedSwing,
 } from './ImuSwingClassifier';
+import type { DetectedWebcamSwing } from './TennisSwingDetector';
 import { WebcamArmTracker } from './WebcamArmTracker';
 
 type SwingListener = (evt: PlayerSwingEvent) => void;
@@ -133,6 +135,17 @@ export class HardwareInputManager {
   private lastImuPacketMs = 0;
   private imuPacketTimestamps: number[] = [];
   private started = false;
+  private pendingSwingTimer: number | null = null;
+  private pendingImuSwing: {
+    swing: RawClassifiedSwing;
+    source: 'm5_ble' | 'm5_serial' | 'm5_ws';
+    receivedMs: number;
+  } | null = null;
+  private unsubWebcamSwing: (() => void) | null = null;
+  /** When false (between points / ball on opponent side), sensors stay hot & calibrated but never emit swings. */
+  private strikeWindowOpen = true;
+  /** Optional incoming ball lateral offset from player in metres (+ = right of player, - = left). */
+  private strikeBallOffsetRightM: number | undefined = undefined;
 
   start(wsUrl?: string) {
     if (this.started || typeof window === 'undefined') return;
@@ -141,6 +154,10 @@ export class HardwareInputManager {
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('mousemove', this.handleMouseMove);
+
+    this.unsubWebcamSwing = this.webcam.onWebcamSwing((camSwing) => {
+      this.handleWebcamSwing(camSwing);
+    });
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const targetUrl = wsUrl ?? `${protocol}//${window.location.host}/ws-hardware`;
@@ -153,10 +170,17 @@ export class HardwareInputManager {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('mousemove', this.handleMouseMove);
+    this.unsubWebcamSwing?.();
+    this.unsubWebcamSwing = null;
     if (this.wsReconnectTimer !== null) {
       window.clearTimeout(this.wsReconnectTimer);
       this.wsReconnectTimer = null;
     }
+    if (this.pendingSwingTimer !== null) {
+      window.clearTimeout(this.pendingSwingTimer);
+      this.pendingSwingTimer = null;
+    }
+    this.pendingImuSwing = null;
     this.ws?.close();
     this.ws = null;
     this.disconnectBle();
@@ -233,7 +257,15 @@ export class HardwareInputManager {
   }
 
   zeroRacket() {
-    this.classifier.startZeroing();
+    if (this.pendingSwingTimer !== null) {
+      window.clearTimeout(this.pendingSwingTimer);
+      this.pendingSwingTimer = null;
+    }
+    this.pendingImuSwing = null;
+    this.classifier.rezero();
+    this.webcam.resetSwingDetector();
+    this.lastSwingMs = 0;
+    this.state.shotType = 'topspin';
     this.state.calibration = this.classifier.getCalibrationPhase();
     this.state.calibrationProgress = this.classifier.getCalibrationProgress();
     this.state.gyro = this.classifier.getLatestReading();
@@ -246,8 +278,42 @@ export class HardwareInputManager {
     this.notifyState();
   }
 
+  rezero() {
+    this.zeroRacket();
+  }
+
   recenter() {
     this.zeroRacket();
+  }
+
+  /**
+   * Gate swing tracking to ONLY when an incoming ball is approaching the player's hitting zone!
+   * Defaults to `active = true` so standalone test pages work anytime.
+   * On `/match`, call `hardwareInput.setStrikeWindow(ballIncoming, ball.x - player.x)` each frame:
+   *  - Between points / opponent shots (`active = false`): sensors keep tracking pose & auto-healing
+   *    bias silently, but NEVER emit swings or burn cooldown.
+   *  - During incoming ball (`active = true`): immediately arms cleanly and passes `ballOffsetRightMeters`
+   *    into `TennisSwingDetector` for rock-solid Forehand vs. Backhand accuracy!
+   */
+  setStrikeWindow(active: boolean, ballOffsetRightMeters?: number) {
+    const wasOpen = this.strikeWindowOpen;
+    this.strikeWindowOpen = active;
+    this.strikeBallOffsetRightM =
+      active && typeof ballOffsetRightMeters === 'number' && Number.isFinite(ballOffsetRightMeters)
+        ? ballOffsetRightMeters
+        : undefined;
+    this.webcam.swingDetector.setBallLateral(this.strikeBallOffsetRightM);
+
+    if (!active) {
+      if (this.pendingSwingTimer !== null) {
+        window.clearTimeout(this.pendingSwingTimer);
+        this.pendingSwingTimer = null;
+      }
+      this.pendingImuSwing = null;
+    } else if (!wasOpen) {
+      // Fresh strike window just opened -> clear any leftover cooldown so the real hit triggers immediately!
+      this.classifier.cancelCooldown();
+    }
   }
 
   setHandedness(handedness: 'right' | 'left') {
@@ -573,15 +639,11 @@ export class HardwareInputManager {
     this.state.imuHz = this.imuPacketTimestamps.length;
     this.state.rawImu = sample;
 
-    // Anti-takeback veto: when webcam sees player merely crossing arm over chest
-    // into backhand setup (not swinging forward), suppress soft dropshot false-triggers.
-    const camSnap = this.webcam.getSnapshot();
-    const isTakingBackCrossBody =
-      camSnap.arm.active &&
-      this.webcam.getPreSwingTakeback(now).setupCrossedOver === false &&
-      camSnap.arm.wing === 'backhand';
-
-    const swing = this.classifier.ingest(sample, now, isTakingBackCrossBody);
+    const camActive = this.webcam.getSnapshot().arm.active;
+    // When webcam TennisSwingDetector is active, disable low-threshold soft IMU path so
+    // M5 uses ONLY the rock-solid 260°/s gyro-peak detector (zero idle / backswing triggers!)
+    // while TennisSwingDetector handles soft dropshots & full shot classification visually!
+    const swing = this.classifier.ingest(sample, now, false, !camActive);
     const early = this.classifier.consumeEarlySwingGuess();
     this.state.gyro = this.classifier.getLatestReading();
     this.state.calibration = this.classifier.getCalibrationPhase();
@@ -591,14 +653,40 @@ export class HardwareInputManager {
       this.notifyState();
     }
 
+    // Strike-window gate: when closed (between points / ball not approaching), keep AHRS &
+    // stillness bias auto-heal running smoothly, but NEVER emit swings or burn cooldown!
+    if (!this.strikeWindowOpen) {
+      this.state.shotType = this.classifier.getLastShotType();
+      return;
+    }
+
     if (early) {
       const pre = this.webcam.getPreSwingTakeback(early.swingStartMs);
+      const handedness = this.state.arm.handedness;
+      const handSign = handedness === 'right' ? 1 : -1;
+      const yawSign = this.classifier.getConfig().invertWingYaw ? -1 : 1;
+      const earlyImuScore =
+        (early.earlyYawDeg * 0.65 - early.preSwingRelYawDeg * 0.35) * handSign * yawSign;
+      const earlyImuWing: StrokeWing = earlyImuScore >= 0 ? 'forehand' : 'backhand';
+      const earlyImuConf =
+        Math.abs(earlyImuScore) < 6 ? 0.15 : clamp(0.4 + Math.abs(earlyImuScore) / 45, 0.4, 0.85);
+
+      let earlyWing: StrokeWing = pre.wing;
+      if (!pre.hasWebcamData) {
+        earlyWing = earlyImuConf >= 0.35 ? earlyImuWing : this.getState().arm.wing;
+      } else {
+        const camDir = pre.wing === 'forehand' ? 1 : -1;
+        const imuDir = earlyImuWing === 'forehand' ? 1 : -1;
+        const camConf = pre.wingConfidence ?? 0.6;
+        earlyWing = camDir * camConf + imuDir * (earlyImuConf * 0.75) >= 0 ? 'forehand' : 'backhand';
+      }
+
       const backswing = pre.hasWebcamData
         ? clamp(pre.backswing * 0.7 + early.imuBackswing * 0.3, 0.1, 1)
         : early.imuBackswing;
       const earlyResolved = this.classifier.resolveEarlyGuess(
         early,
-        pre.wing,
+        earlyWing,
         backswing,
         pre.deltaArmY,
         pre.hasWebcamData,
@@ -610,7 +698,7 @@ export class HardwareInputManager {
         confidence: clamp(earlyResolved.confidence, 0.35, 0.95),
         backswing,
         initialSpeed: early.initialSpeed,
-        wing: pre.wing,
+        wing: earlyWing,
         armZone: pre.armZone,
         armX: pre.armX,
         source,
@@ -618,44 +706,277 @@ export class HardwareInputManager {
     }
 
     if (swing) {
-      this.lastSwingMs = now;
-      // Pass swingPeakMs (contact instant, BEFORE follow-through drop!) to WebcamArmTracker
-      const armSummary = this.webcam.getSwingArmSummary(swing.swingStartMs, swing.swingPeakMs);
-      const armFallback = this.getState().arm;
-      const wing = armSummary.hasWebcamData ? armSummary.wing : armFallback.wing;
-      const armZone = armSummary.hasWebcamData ? armSummary.armZone : armFallback.armZone;
-      const armX = armSummary.hasWebcamData ? armSummary.armX : armFallback.armX;
+      if (camActive && typeof window !== 'undefined') {
+        // M5 BLE Peak is the SOLE swing trigger when M5 is connected (eliminates 100% of
+        // standalone webcam backswing/drift false triggers!). Wait 100 ms so the exact
+        // time-aligned MediaPipe frames for [swingStartMs..swingEndMs] have arrived, then
+        // run TennisSwingDetector.classifyWindow() directly on THAT exact physical swing!
+        if (this.pendingSwingTimer !== null) {
+          window.clearTimeout(this.pendingSwingTimer);
+        }
+        this.pendingImuSwing = { swing, source, receivedMs: now };
+        this.pendingSwingTimer = window.setTimeout(() => {
+          this.pendingSwingTimer = null;
+          const pending = this.pendingImuSwing;
+          this.pendingImuSwing = null;
+          if (!pending) return;
+          const nowTs = performance.now();
 
-      // Universal 6-combo (FH/BH × topspin/slice/dropshot) 3D world-frame + webcam resolution
-      const resolved = this.classifier.resolveShot(
-        swing,
-        wing,
-        armSummary.deltaArmY,
-        armSummary.hasWebcamData,
-        armSummary.peakWristSpeed,
-        true,
-      );
+          // Run backswing-prep veto on the time-aligned forward-stroke frames first!
+          const armSummary = this.webcam.getSwingArmSummary(
+            pending.swing.swingStartMs,
+            pending.swing.swingEndMs,
+            90,
+          );
+          const handedness = this.state.arm.handedness;
+          const handSign = handedness === 'right' ? 1 : -1;
+          const yawSign = this.classifier.getConfig().invertWingYaw ? -1 : 1;
+          const rawYawDeg =
+            Math.abs(pending.swing.worldYawToPeakDeg) >= 5
+              ? pending.swing.worldYawToPeakDeg
+              : pending.swing.worldYawAccumDeg;
+          const signedSwingYawDeg = rawYawDeg * handSign * yawSign;
 
-      this.state.shotType = resolved.shotType;
+          const isForehandBackswingPrep =
+            armSummary.hasWebcamData &&
+            armSummary.minSignedX >= -0.06 &&
+            (signedSwingYawDeg < -7 || (armSummary.signedDeltaX > 0.14 && signedSwingYawDeg < 5));
 
-      this.emitSwing({
-        id: ++this.swingCounter,
-        timestampMs: Date.now(),
-        shotType: resolved.shotType,
-        wing,
-        armZone,
-        armX,
-        power: resolved.power,
-        rotation: resolved.rotation,
-        angle: resolved.angle,
-        confidence: resolved.confidence,
-        peakAccelG: swing.peakAccelG,
-        peakGyroDps: swing.peakGyroDps,
-        source,
-      });
+          const isBackhandBackswingPrep =
+            armSummary.hasWebcamData &&
+            pending.swing.peakAccelG < 1.35 &&
+            pending.swing.swingSpeedMps < 1.95 &&
+            armSummary.endSignedX < -0.08 &&
+            armSummary.signedDeltaX < -0.14;
+
+          if (isForehandBackswingPrep || isBackhandBackswingPrep) {
+            this.classifier.cancelCooldown();
+            return;
+          }
+
+          // Exact-window battle-tested Tennis-Game-Spec camera contact classification!
+          const camRead = this.webcam.swingDetector.classifyWindow(
+            pending.swing.swingStartMs + 90,
+            pending.swing.swingEndMs + 90,
+            this.strikeBallOffsetRightM,
+          );
+          if (camRead) {
+            this.emitMergedWebcamImuSwing(camRead, pending.swing, pending.source, nowTs);
+          } else {
+            this.finalizeSwing(pending.swing, pending.source, nowTs, 90);
+          }
+        }, 105);
+      } else {
+        this.finalizeSwing(swing, source, now, 0);
+      }
     } else {
       this.state.shotType = this.classifier.getLastShotType();
     }
+  }
+
+  /**
+   * Standalone Webcam TennisSwingDetector handler:
+   * - When M5 IMU IS connected: DO NOT standalone-fire on webcam arm movements (prevents
+   *   backswing prep or arm positioning from firing fake shots and swallowing the real swing!).
+   *   M5 BLE gyro peak triggers the exact time-aligned `classifyWindow()` read instead!
+   * - When M5 IMU is NOT connected (webcam-only mode): emits swings directly so the game
+   *   still works seamlessly with just a laptop webcam!
+   */
+  private handleWebcamSwing(camSwing: DetectedWebcamSwing) {
+    if (!this.strikeWindowOpen) return;
+    const now = performance.now();
+    const imuLive = now - this.lastImuPacketMs < 1200;
+    if (imuLive) {
+      // M5 BLE is the sole swing trigger when connected — ignore standalone webcam triggers!
+      return;
+    }
+
+    if (now - this.lastSwingMs < 360) return;
+
+    this.lastSwingMs = now;
+    this.state.shotType = camSwing.shotType;
+
+    this.emitSwing({
+      id: ++this.swingCounter,
+      timestampMs: Date.now(),
+      shotType: camSwing.shotType,
+      wing: camSwing.wing,
+      armZone: camSwing.armZone,
+      armX: camSwing.armX,
+      power: clamp(camSwing.power, 0.18, 1),
+      rotation: clamp(camSwing.rotation, -1, 1),
+      angle: clamp(camSwing.angle, -1, 1),
+      confidence: clamp(camSwing.confidence, 0.55, 0.97),
+      peakAccelG: 0,
+      peakGyroDps: 0,
+      source: 'keyboard',
+    });
+  }
+
+  /**
+   * Merges battle-tested Webcam exact-window classification (`wing`, `shotType`, `rotation`, `angle`)
+   * with M5 BLE 220°/s gyro-peak power & IMU tie-breaking for neutral-center strokes.
+   */
+  private emitMergedWebcamImuSwing(
+    camSwing: DetectedWebcamSwing,
+    imuSwing: RawClassifiedSwing,
+    source: 'm5_ble' | 'm5_serial' | 'm5_ws',
+    now: number,
+  ) {
+    this.lastSwingMs = now;
+    const imuGyroPower = clamp(((imuSwing.peakGyroDps - 200) / 1100) * 0.8 + 0.2, 0.2, 1.0);
+    const mergedPower = clamp(0.60 * imuGyroPower + 0.40 * camSwing.power, 0.18, 1);
+
+    // If webcam wingScore was nearly dead-center (|wingScore| < 0.20), let IMU vertical yaw break the tie!
+    const imuVote = this.classifier.inferImuWing(imuSwing, this.state.arm.handedness);
+    const wing: StrokeWing =
+      Math.abs(camSwing.wingScore) < 0.20 && imuVote.confidence >= 0.50
+        ? imuVote.wing
+        : camSwing.wing;
+
+    // Gentle low-gyro + soft-speed tap = dropshot; huge gyro smash (> 650 deg/s) is NEVER dropshot!
+    let shotType = camSwing.shotType;
+    let rotation = camSwing.rotation;
+    if (shotType !== 'dropshot' && imuSwing.peakGyroDps < 340 && imuSwing.swingSpeedMps < 1.55 && camSwing.swingSpeed < 1.1) {
+      shotType = 'dropshot';
+      rotation = -0.32;
+    } else if (shotType === 'dropshot' && imuSwing.peakGyroDps > 620) {
+      shotType = camSwing.pathAngleDeg < -6 ? 'slice' : 'topspin';
+      rotation = shotType === 'slice' ? -0.45 : 0.45;
+    }
+
+    this.state.shotType = shotType;
+
+    this.emitSwing({
+      id: ++this.swingCounter,
+      timestampMs: Date.now(),
+      shotType,
+      wing,
+      armZone: camSwing.armZone,
+      armX: camSwing.armX,
+      power: mergedPower,
+      rotation: clamp(rotation, -1, 1),
+      angle: clamp(camSwing.angle, -1, 1),
+      confidence: clamp(Math.max(camSwing.confidence, 0.84), 0.6, 0.98),
+      peakAccelG: imuSwing.peakAccelG,
+      peakGyroDps: imuSwing.peakGyroDps,
+      source,
+    });
+  }
+
+  private finalizeSwing(
+    swing: NonNullable<ReturnType<ImuSwingClassifier['ingest']>>,
+    source: 'm5_ble' | 'm5_serial' | 'm5_ws',
+    now: number,
+    camLagMs: number,
+  ) {
+    const armSummary = this.webcam.getSwingArmSummary(
+      swing.swingStartMs,
+      swing.swingEndMs,
+      camLagMs,
+    );
+    const armFallback = this.getState().arm;
+    const handedness = this.state.arm.handedness;
+    const handSign = handedness === 'right' ? 1 : -1;
+    const yawSign = this.classifier.getConfig().invertWingYaw ? -1 : 1;
+    const imuVote = this.classifier.inferImuWing(swing, handedness);
+    const rawYawDeg =
+      Math.abs(swing.worldYawToPeakDeg) >= 5
+        ? swing.worldYawToPeakDeg
+        : swing.worldYawAccumDeg;
+    const signedSwingYawDeg = rawYawDeg * handSign * yawSign;
+
+    // BACKSWING-PREP VETO (on time-aligned camera frames + IMU!):
+    // Reject moving backwards to coil/prepare a swing, and immediately cancel cooldown
+    // so the player's ACTUAL forward swing 150ms later triggers cleanly!
+    const isForehandBackswingPrep =
+      armSummary.hasWebcamData &&
+      armSummary.minSignedX >= -0.06 &&
+      (signedSwingYawDeg < -7 || (armSummary.signedDeltaX > 0.14 && signedSwingYawDeg < 5));
+
+    const isBackhandBackswingPrep =
+      armSummary.hasWebcamData &&
+      swing.peakAccelG < 1.35 &&
+      swing.swingSpeedMps < 1.95 &&
+      armSummary.endSignedX < -0.08 &&
+      armSummary.signedDeltaX < -0.14;
+
+    const isImuOnlyBackswingPrep =
+      !armSummary.hasWebcamData &&
+      Math.abs(swing.preSwingRelYawDeg) < 10 &&
+      Math.abs(rawYawDeg) > 26 &&
+      swing.peakAccelG < 1.10;
+
+    if (isForehandBackswingPrep || isBackhandBackswingPrep || isImuOnlyBackswingPrep) {
+      this.classifier.cancelCooldown();
+      return;
+    }
+
+    this.lastSwingMs = now;
+
+    let wing: StrokeWing;
+    let armZone: ArmZone;
+    let armX: number;
+
+    if (armSummary.hasWebcamData) {
+      // CAMERA-PRIMARY + IMU TIE-BREAKER FUSION:
+      // When time-aligned webcam clearly sees FH or BH (wingConfidence >= 0.65),
+      // camera leads strongly (1.2x weight), while IMU yaw (0.45x weight) reinforces
+      // agreement and cleanly breaks ties when starting from neutral center!
+      const camDir = armSummary.wing === 'forehand' ? 1 : -1;
+      const imuDir = imuVote.wing === 'forehand' ? 1 : -1;
+      const camWeight =
+        armSummary.wingConfidence >= 0.65
+          ? armSummary.wingConfidence * 1.2
+          : armSummary.wingConfidence * 0.75;
+      const imuWeight =
+        armSummary.wingConfidence >= 0.65
+          ? imuVote.confidence * 0.45
+          : imuVote.confidence * 0.85;
+      const fusedScore = camDir * camWeight + imuDir * imuWeight;
+      wing = fusedScore >= 0 ? 'forehand' : 'backhand';
+      armZone = armSummary.armZone;
+      armX = armSummary.armX;
+    } else if (imuVote.confidence >= 0.35) {
+      // IMU-only mode (webcam off): pure 6-DOF world-vertical yaw cleanly classifies FH vs BH!
+      wing = imuVote.wing;
+      const sideSign = wing === 'forehand' ? handSign : -handSign;
+      armZone = sideSign > 0 ? 'right' : 'left';
+      armX = sideSign * 0.65;
+    } else {
+      wing = armFallback.wing;
+      armZone = armFallback.armZone;
+      armX = armFallback.armX;
+    }
+
+    // Camera-Primary (70%) + IMU (30%) 6-Combo Shot Resolution!
+    const resolved = this.classifier.resolveShot(
+      swing,
+      wing,
+      armSummary.deltaArmY,
+      armSummary.hasWebcamData,
+      armSummary.peakWristSpeed,
+      true,
+      armSummary.strokePathSw,
+    );
+
+    this.state.shotType = resolved.shotType;
+
+    this.emitSwing({
+      id: ++this.swingCounter,
+      timestampMs: Date.now(),
+      shotType: resolved.shotType,
+      wing,
+      armZone,
+      armX,
+      power: resolved.power,
+      rotation: resolved.rotation,
+      angle: resolved.angle,
+      confidence: resolved.confidence,
+      peakAccelG: swing.peakAccelG,
+      peakGyroDps: swing.peakGyroDps,
+      source,
+    });
   }
 
   private emitSwing(evt: PlayerSwingEvent) {

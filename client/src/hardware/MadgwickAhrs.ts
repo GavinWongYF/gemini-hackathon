@@ -38,6 +38,10 @@ export interface AhrsOutput {
   worldFaceNormal: Vec3;
   /** Relative screen face tilt in degrees vs. ZERO pose (+ open/skyward, - closed/floorward) */
   faceTiltDeg: number;
+  /** Grip-agnostic virtual racket UP vector rotated into world frame; always (0, 0, +1) at ZERO */
+  worldRacketUp: Vec3;
+  /** Angle in degrees between worldRacketUp and straight world UP (+Z_W); 0° at ZERO */
+  racketTiltDeg: number;
 }
 
 export interface MadgwickAhrsConfig {
@@ -90,6 +94,7 @@ export class MadgwickAhrs {
   private restAccelMag = 1.0;
   private restFaceNormal: Vec3 = { x: 0, y: -1, z: 0 };
   private restFaceTiltDeg = 0;
+  private bodyUpAtZero: Vec3 = { x: 0, y: 0, z: 1 };
 
   constructor(config?: Partial<MadgwickAhrsConfig>) {
     this.config = { ...DEFAULT_MADGWICK_CONFIG, ...config };
@@ -106,6 +111,7 @@ export class MadgwickAhrs {
     this.restAccelMag = 1.0;
     this.restFaceNormal = { x: 0, y: -1, z: 0 };
     this.restFaceTiltDeg = 0;
+    this.bodyUpAtZero = { x: 0, y: 0, z: 1 };
   }
 
   /**
@@ -120,6 +126,13 @@ export class MadgwickAhrs {
    */
   getQuaternion(): Quaternion {
     return { w: this.qw, x: this.qx, y: this.qy, z: this.qz };
+  }
+
+  /**
+   * Returns the body-frame unit vector that pointed straight world UP (0, 0, +1) at ZERO.
+   */
+  getBodyUpAtZero(): Vec3 {
+    return { ...this.bodyUpAtZero };
   }
 
   /**
@@ -145,9 +158,10 @@ export class MadgwickAhrs {
    * Align the AHRS to the player's resting ZERO pose.
    *
    * Records the sensor's resting gravity magnitude (`restAccelMag`) to tolerate
-   * MPU6886 axis scale bias (~0.83–1.10g), computes the shortest-arc quaternion
-   * mapping `[meanAx, meanAy, meanAz]` directly onto world UP `[0, 0, +restAccelMag]`,
-   * and captures the resting screen normal & tilt for relative `faceTiltDeg`.
+   * MPU6886 axis scale bias (~0.83–1.10g), stores `bodyUpAtZero` (the body-frame unit
+   * vector pointing straight world UP at ZERO, regardless of grip orientation),
+   * computes the shortest-arc quaternion mapping `[meanAx, meanAy, meanAz]` directly
+   * onto world UP `[0, 0, +restAccelMag]`, and captures the resting screen normal.
    */
   alignToZero(meanAx: number, meanAy: number, meanAz: number): void {
     const rawMag = Math.hypot(meanAx, meanAy, meanAz);
@@ -158,10 +172,12 @@ export class MadgwickAhrs {
       this.qx = 0;
       this.qy = 0;
       this.qz = 0;
+      this.bodyUpAtZero = { x: 0, y: 0, z: 1 };
     } else {
       const ux = meanAx / rawMag;
       const uy = meanAy / rawMag;
       const uz = meanAz / rawMag;
+      this.bodyUpAtZero = { x: ux, y: uy, z: uz };
 
       // Shortest-arc quaternion from u = (ux, uy, uz) to world UP v = (0, 0, 1):
       // dot(u, v) = uz, cross(u, v) = (uy, -ux, 0)
@@ -187,6 +203,37 @@ export class MadgwickAhrs {
     const normal = this.worldFaceNormal();
     this.restFaceNormal = normal;
     this.restFaceTiltDeg = Math.asin(clamp(normal.z, -1, 1)) * RAD_TO_DEG;
+  }
+
+  /**
+   * Re-align ONLY the gravity vector (world UP) without modifying `bodyUpAtZero`.
+   * Used by the bias-immune stillness detector to instantly self-heal if an M5
+   * hardware gyro-bias jump (e.g., after BLE reconnect/reboot) spun the quaternion
+   * while stationary.
+   */
+  alignGravityOnly(meanAx: number, meanAy: number, meanAz: number): void {
+    const rawMag = Math.hypot(meanAx, meanAy, meanAz);
+    if (rawMag < 0.2) return;
+    this.restAccelMag = rawMag;
+    const ux = meanAx / rawMag;
+    const uy = meanAy / rawMag;
+    const uz = meanAz / rawMag;
+    if (uz > -0.999999) {
+      const w = 1 + uz;
+      const x = uy;
+      const y = -ux;
+      const z = 0;
+      const norm = Math.hypot(w, x, y, z);
+      this.qw = w / norm;
+      this.qx = x / norm;
+      this.qy = y / norm;
+      this.qz = z / norm;
+    } else {
+      this.qw = 0;
+      this.qx = 1;
+      this.qy = 0;
+      this.qz = 0;
+    }
   }
 
   /**
@@ -324,6 +371,15 @@ export class MadgwickAhrs {
     const faceTiltDeg =
       Math.asin(clamp(worldFaceNormal.z, -1, 1)) * RAD_TO_DEG - this.restFaceTiltDeg;
 
+    // Grip-agnostic virtual racket UP vector in world frame (always [0, 0, +1] at ZERO)
+    const worldRacketUp = rotateVecByQuat(
+      q,
+      this.bodyUpAtZero.x,
+      this.bodyUpAtZero.y,
+      this.bodyUpAtZero.z,
+    );
+    const racketTiltDeg = Math.acos(clamp(worldRacketUp.z, -1, 1)) * RAD_TO_DEG;
+
     return {
       q,
       worldLinearAccel,
@@ -331,6 +387,8 @@ export class MadgwickAhrs {
       worldGyro,
       worldFaceNormal,
       faceTiltDeg,
+      worldRacketUp,
+      racketTiltDeg,
     };
   }
 }

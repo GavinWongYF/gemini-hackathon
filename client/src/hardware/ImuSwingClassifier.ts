@@ -36,21 +36,24 @@ export interface ImuClassifierConfig {
   invertAngle: boolean;
   /** Invert topspin/slice axis if needed */
   invertRotation: boolean;
+  /** Invert IMU forehand/backhand yaw voter sign if needed */
+  invertWingYaw?: boolean;
 }
 
 export const DEFAULT_IMU_CONFIG: ImuClassifierConfig = {
-  armAccelG: 1.15,
-  armGyroDps: 165,
+  armAccelG: 0.75,
+  armGyroDps: 220,
   dropAccelG: 0.62,
   dropGyroDps: 85,
-  dropMinSpeedMps: 0.20,
+  dropMinSpeedMps: 0.26,
   maxAccelG: 3.4,
   maxGyroDps: 500,
-  cooldownMs: 650,
-  dropshotPowerMax: 0.46,
+  cooldownMs: 550,
+  dropshotPowerMax: 0.48,
   sliceThreshold: -0.12,
   invertAngle: false,
   invertRotation: false,
+  invertWingYaw: false,
 };
 
 export interface EarlySwingGuess {
@@ -60,6 +63,9 @@ export interface EarlySwingGuess {
   imuBackswing: number;
   accelSlopeGps: number;
   faceNormal: Vec3;
+  racketUp: Vec3;
+  earlyYawDeg: number;
+  preSwingRelYawDeg: number;
   vLive: Vec3;
   peakAccelG: number;
   peakGyroDps: number;
@@ -76,8 +82,16 @@ export interface RawClassifiedSwing {
   swingSpeedMps: number;
   /** 3D world-frame M5 screen normal at peak contact */
   faceNormalAtPeak: Vec3;
-  /** Signed IMU lateral swing direction (+ = right, - = left in world frame) */
+  /** Grip-agnostic virtual racket UP vector in world frame at peak contact */
+  racketUpAtPeak: Vec3;
+  /** Signed IMU lateral swing yaw integrated across entire stroke (deg, + = CCW around +Z_W) */
   worldYawAccumDeg: number;
+  /** Signed IMU world yaw integrated strictly up to peak contact speed (deg, immune to follow-through recoil) */
+  worldYawToPeakDeg: number;
+  /** Signed peak world-vertical yaw rate during the stroke (deg/s) */
+  peakWorldYawDps: number;
+  /** Relative world-Z yaw at swing onset (deg, captures pre-swing backswing coil) */
+  preSwingRelYawDeg: number;
   power: number;
   angle: number;
   peakAccelG: number;
@@ -101,7 +115,10 @@ interface RingEntry {
   aWorld: Vec3;
   aMag: number;
   faceNormal: Vec3;
+  racketUp: Vec3;
   gyroDps: number;
+  worldYawDps: number;
+  relYawDeg: number;
 }
 
 type SwingState = 'idle' | 'armed' | 'cooldown';
@@ -186,14 +203,25 @@ export class ImuSwingClassifier {
   private swingPeakMs = 0;
   private vContact: Vec3 = { x: 0, y: 0, z: 0 };
   private faceNormalAtPeak: Vec3 = { x: 0, y: 1, z: 0 };
+  private racketUpAtPeak: Vec3 = { x: 0, y: 0, z: 1 };
   private peakAccelG = 0;
   private peakGyroDps = 0;
+  private gyroPeakMs = 0;
+  private samplesSinceGyroPeak = 0;
   private peakEnergy = 0;
   private swingYawAccumDeg = 0;
+  private swingYawToPeakDeg = 0;
+  private peakWorldYawDps = 0;
+  private preSwingRelYawDeg = 0;
   private armAccelAtStart = 0;
 
   private pendingEarlyGuess: EarlySwingGuess | null = null;
   private earlyGuessEmitted = false;
+
+  // Bias-immune raw stillness detector (150ms rolling window BEFORE gyro bias subtraction!
+  // 100% immune to +/-500 deg/s M5 MPU6886 gyro-offset jumps across BLE reconnects/reboots!)
+  private rawWindow: Array<{ t: number; ax: number; ay: number; az: number; gx: number; gy: number; gz: number }> = [];
+  private rawStillSinceMs: number | null = null;
 
   private latestReading: GyroReading = {
     power: 0,
@@ -236,25 +264,84 @@ export class ImuSwingClassifier {
     this.zeroGyrSumY = 0;
     this.zeroGyrSumZ = 0;
 
-    this.state = 'idle';
-    this.dropPulseSinceMs = null;
-    this.quietSinceMs = null;
-    this.stillSinceMs = null;
-    this.vLiveX = 0;
-    this.vLiveY = 0;
-    this.vLiveZ = 0;
+    this.ahrs.reset();
+    this.gyroBiasX = 0;
+    this.gyroBiasY = 0;
+    this.gyroBiasZ = 0;
     this.aBiasX = 0;
     this.aBiasY = 0;
     this.aBiasZ = 0;
+    this.localAccelMag = 1.0;
+
+    this.vLiveX = 0;
+    this.vLiveY = 0;
+    this.vLiveZ = 0;
+    this.stillSinceMs = null;
+
+    this.state = 'idle';
+    this.swingStartMs = 0;
+    this.swingPeakMs = 0;
+    this.cooldownUntilMs = 0;
+    this.cooldownMaxUntilMs = 0;
+    this.quietSinceMs = null;
+    this.dropPulseSinceMs = null;
+
+    this.vIntX = 0;
+    this.vIntY = 0;
+    this.vIntZ = 0;
+    this.prevIntAx = 0;
+    this.prevIntAy = 0;
+    this.prevIntAz = 0;
+    this.peakSpeedMps = 0;
+    this.vContact = { x: 0, y: 0, z: 0 };
+    this.faceNormalAtPeak = { x: 0, y: 1, z: 0 };
+    this.racketUpAtPeak = { x: 0, y: 0, z: 1 };
+    this.peakAccelG = 0;
+    this.peakGyroDps = 0;
+    this.gyroPeakMs = 0;
+    this.samplesSinceGyroPeak = 0;
+    this.peakEnergy = 0;
+    this.swingYawAccumDeg = 0;
+    this.swingYawToPeakDeg = 0;
+    this.peakWorldYawDps = 0;
+    this.preSwingRelYawDeg = 0;
+    this.armAccelAtStart = 0;
     this.relYawDeg = 0;
     this.ring = [];
+    this.rawWindow = [];
+    this.rawStillSinceMs = null;
     this.pendingEarlyGuess = null;
     this.earlyGuessEmitted = false;
+    this.lastClassifiedShot = 'topspin';
+
     this.angleFilter.reset(0);
     this.rotFilter.reset(0);
-    this.latestReading.angle = 0;
-    this.latestReading.rotation = 0;
-    this.latestReading.power = 0;
+    this.latestReading = {
+      power: 0,
+      rotation: 0,
+      angle: 0,
+      linearAccelG: 0,
+      gyroRateDps: 0,
+      rawPitchDeg: 0,
+      rawRollDeg: 0,
+      rawYawDeg: 0,
+    };
+  }
+
+  /**
+   * Immediately exits cooldown back to `idle` — used when a backswing prep
+   * motion is vetoed so the player's actual forward swing 150ms later fires cleanly!
+   */
+  cancelCooldown() {
+    this.state = 'idle';
+    this.cooldownUntilMs = 0;
+    this.cooldownMaxUntilMs = 0;
+    this.quietSinceMs = null;
+    this.dropPulseSinceMs = null;
+  }
+
+  rezero() {
+    this.startZeroing();
   }
 
   recenter() {
@@ -276,30 +363,79 @@ export class ImuSwingClassifier {
   }
 
   /**
+   * Grip-invariant IMU Forehand / Backhand voter using world-vertical (+Z_W) yaw
+   * integrated up to peak contact (`worldYawToPeakDeg`) and pre-swing backswing coil
+   * (`preSwingRelYawDeg`).
+   *
+   * Right-hand rule around world UP (+Z_W):
+   * - Right-handed Forehand sweeps Right -> Forward -> Left = CCW around +Z_W (+yaw)
+   *   after coiling CW (-preSwingRelYawDeg).
+   * - Right-handed Backhand sweeps Left -> Forward -> Right = CW around +Z_W (-yaw)
+   *   after coiling CCW (+preSwingRelYawDeg).
+   * - Left-handed is the exact mirror (`handSign = -1`).
+   */
+  inferImuWing(
+    swing: RawClassifiedSwing,
+    handedness: 'right' | 'left',
+  ): { wing: StrokeWing; confidence: number; signedYawDeg: number } {
+    const handSign =
+      (handedness === 'right' ? 1 : -1) * (this.config.invertWingYaw ? -1 : 1);
+
+    const yawToPeak = swing.worldYawToPeakDeg ?? swing.worldYawAccumDeg;
+    const yawAccum = swing.worldYawAccumDeg;
+    const effectiveYawDeg =
+      Math.abs(yawToPeak) < 10 && Math.abs(yawAccum) >= 12
+        ? 0.35 * yawToPeak + 0.65 * yawAccum
+        : yawToPeak;
+
+    const primarySignedYaw = effectiveYawDeg * handSign;
+    const coilSignedYaw = -(swing.preSwingRelYawDeg ?? 0) * handSign;
+    const signedYawDeg =
+      Math.abs(coilSignedYaw) >= 4
+        ? 0.65 * primarySignedYaw + 0.35 * coilSignedYaw
+        : primarySignedYaw;
+
+    const wing: StrokeWing = signedYawDeg >= 0 ? 'forehand' : 'backhand';
+    const absYaw = Math.abs(signedYawDeg);
+    const confidence =
+      absYaw < 8
+        ? clamp(absYaw / 25, 0, 0.30)
+        : clamp(0.45 + (absYaw - 8) / 42, 0.45, 0.94);
+
+    return { wing, confidence, signedYawDeg };
+  }
+
+  /**
    * Pure early-swing guess (at ~25ms into swing) for 3D avatar anticipation.
+   * Uses 100% grip-agnostic virtual racket UP (`early.racketUp`) and live 3D velocity.
    * Never mutates `lastClassifiedShot`, and avoids the low-speed dropshot bias
    * while acceleration is still ramping!
    */
   resolveEarlyGuess(
     early: EarlySwingGuess,
-    wing: StrokeWing,
+    _wing: StrokeWing,
     backswing: number,
     webcamDeltaArmY = 0,
     hasWebcamData = false,
   ): { shotType: HumanShotType; confidence: number } {
-    const wingFaceSign = wing === 'backhand' ? -1 : 1;
-    const effFaceOpen = wingFaceSign * early.faceNormal.z;
-
-    // Only predict dropshot early if backswing is compact, face is open, AND accel isn't ramping hard
-    if (backswing < 0.35 && effFaceOpen > 0.14 && early.accelSlopeGps < 12) {
+    // Only predict dropshot early if backswing is compact AND accel isn't ramping hard
+    if (backswing < 0.32 && early.accelSlopeGps < 10 && early.initialSpeed < 0.35) {
       return { shotType: 'dropshot', confidence: 0.62 };
     }
 
+    const v = early.vLive;
+    const vHoriz = Math.hypot(v.x, v.y);
+    const racketUp = early.racketUp ?? { x: 0, y: 0, z: 1 };
+    const effFaceOpen =
+      vHoriz >= 0.25
+        ? clamp(-(racketUp.x * (v.x / vHoriz) + racketUp.y * (v.y / vHoriz)), -1, 1)
+        : 0;
+
     const vertCue = hasWebcamData
-      ? clamp(webcamDeltaArmY / 0.1, -1, 1) * 0.5 + clamp(early.vLive.z / 1.2, -1, 1) * 0.5
-      : clamp(early.vLive.z / 1.2, -1, 1);
+      ? clamp(webcamDeltaArmY / 0.1, -1, 1) * 0.55 + clamp(v.z / 1.1, -1, 1) * 0.45
+      : clamp(v.z / 1.1, -1, 1);
     const faceCue = clamp(-effFaceOpen / 0.5, -1, 1);
-    const score = vertCue * 0.65 + faceCue * 0.35;
+    const score = vHoriz >= 0.25 ? vertCue * 0.65 + faceCue * 0.35 : vertCue;
 
     if (score < this.config.sliceThreshold) {
       return { shotType: 'slice', confidence: 0.64 };
@@ -309,8 +445,8 @@ export class ImuSwingClassifier {
 
   /**
    * Pure 6-combo (`FH/BH` × `topspin/slice/dropshot`) multi-cue shot classifier
-   * using 3D contact velocity (`vContact`), grip-invariant face openness, and
-   * peak-locked webcam kinematics (`deltaArmY`, `peakWristSpeed`).
+   * using 3D contact velocity (`vContact`), 100% grip-agnostic virtual racket UP
+   * (`racketUpAtPeak`), and peak-locked webcam kinematics (`deltaArmY`, `peakWristSpeed`).
    */
   resolveShot(
     swing: RawClassifiedSwing,
@@ -319,72 +455,98 @@ export class ImuSwingClassifier {
     hasWebcamData = false,
     peakWristSpeed = 0,
     commitAsLastShot = true,
+    webcamStrokePathSw = 0,
   ): ResolvedShotResult {
     const rotSign = this.config.invertRotation ? -1 : 1;
     const yawSign = this.config.invertAngle ? -1 : 1;
 
     const v = swing.vContact;
-    const n = swing.faceNormalAtPeak;
+    const racketUp = swing.racketUpAtPeak ?? { x: 0, y: 0, z: 1 };
     const vHoriz = Math.hypot(v.x, v.y);
 
-    // 1. Grip & wing-invariant face openness:
-    //    Determine which side of the M5 (+Z screen or -Z back) is the hitting face
-    //    by dotting screen normal with horizontal swing velocity; fall back to wing!
-    let hitSign = wing === 'backhand' ? -1 : 1;
-    if (vHoriz >= 0.35) {
-      const faceDot = (n.x * v.x + n.y * v.y) / vHoriz;
-      if (Math.abs(faceDot) >= 0.25) {
-        hitSign = faceDot > 0 ? 1 : -1;
-      }
+    // 1. 100% Grip-Agnostic Face Openness via SO(3) virtual racket UP projection:
+    // At ZERO, `worldRacketUp` is (0, 0, +1) for EVERY grip orientation.
+    // Closing the racket over the ball (topspin) pitches `racketUp` forward along +u_h
+    // (tiltAlongSwing > 0 -> effFaceOpen < 0). Laying the racket open (slice/dropshot)
+    // tilts `racketUp` backward away from +u_h (tiltAlongSwing < 0 -> effFaceOpen > 0).
+    let effFaceOpen = 0;
+    if (vHoriz >= 0.25) {
+      const ux = v.x / vHoriz;
+      const uy = v.y / vHoriz;
+      const tiltAlongSwing = racketUp.x * ux + racketUp.y * uy;
+      effFaceOpen = clamp(-tiltAlongSwing, -1, 1);
     }
-    // effFaceOpen > 0 => hitting face tilted UP toward sky (open / slice / dropshot)
-    // effFaceOpen < 0 => hitting face tilted DOWN / vertical (closed / topspin)
-    const effFaceOpen = clamp(hitSign * n.z, -1, 1);
 
-    // 2. Unified BH-compensated power (backhands naturally have ~12% lower peak speed)
+    // 2. Unified BH-compensated power blended with bleController.ts's proven gyro-peak curve
+    //    (260-300 deg/s gentle -> ~0.22, 1350+ deg/s full swing -> 1.0)
     const speedComp = swing.swingSpeedMps * (wing === 'backhand' ? 1.12 : 1.0);
+    const gyroPower = clamp(((swing.peakGyroDps - 240) / 1100) * 0.8 + 0.2, 0.2, 1.0);
     const vNorm = clamp(speedComp / 4.2, 0, 1);
     const aNorm = clamp(swing.peakAccelG / Math.max(0.5, this.config.maxAccelG), 0, 1);
-    const gNorm = clamp(swing.peakGyroDps / Math.max(50, this.config.maxGyroDps), 0, 1);
-    const power = clamp(0.45 * vNorm + 0.30 * aNorm + 0.25 * gNorm, 0.16, 1);
+    const power = clamp(0.40 * gyroPower + 0.35 * vNorm + 0.25 * aNorm, 0.18, 1.0);
 
-    // 3. Orthogonal spin cues (+ = topspin low->high, - = slice high->low)
-    const imuPath = clamp(v.z / Math.max(0.55, 0.55 * vHoriz), -1, 1);
-    const camVert = hasWebcamData ? clamp(webcamDeltaArmY / 0.11, -1, 1) : 0;
+    // 3. Camera-Primary + IMU Fusion for Spin (+ = topspin low->high, - = slice high->low)
+    // When time-aligned webcam sees clear upward/downward arm travel (|deltaArmY| >= 0.03),
+    // give camera 70% weight (100% immune to M5 grip angle & axis-scale bias!) + 30% IMU.
+    const imuPath = clamp(v.z / Math.max(0.5, 0.52 * vHoriz), -1, 1);
+    const camVert = hasWebcamData ? clamp(webcamDeltaArmY / 0.085, -1, 1) : 0;
     const faceCue = clamp(-effFaceOpen / 0.5, -1, 1);
 
     const rawSpin =
-      hasWebcamData && Math.abs(webcamDeltaArmY) > 0.025
-        ? clamp(0.45 * imuPath + 0.35 * camVert + 0.20 * faceCue, -1, 1)
-        : clamp(0.65 * imuPath + 0.35 * faceCue, -1, 1);
+      hasWebcamData && Math.abs(webcamDeltaArmY) >= 0.03
+        ? clamp(0.70 * camVert + 0.22 * imuPath + 0.08 * faceCue, -1, 1)
+        : hasWebcamData
+          ? clamp(0.42 * camVert + 0.43 * imuPath + 0.15 * faceCue, -1, 1)
+          : clamp(0.70 * imuPath + 0.30 * faceCue, -1, 1);
     const spinScore = rotSign * rawSpin;
 
-    // 4. 6-Combo Decision Rules (cleanly separates FH/BH dropshots vs slices vs topspins!)
-    const camSlowOk = !hasWebcamData || peakWristSpeed <= 0 || peakWristSpeed < 1.65;
+    // 4. Camera + IMU Fused 6-Combo Decision Rules (compact slow tap = dropshot; big fast arc = topspin/slice)
+    const camSlowOk = !hasWebcamData || peakWristSpeed <= 0 || peakWristSpeed < 3.6;
+    const camCompact =
+      hasWebcamData &&
+      webcamStrokePathSw > 0 &&
+      webcamStrokePathSw < 0.72 &&
+      (peakWristSpeed <= 0 || peakWristSpeed < 3.6);
+    const camBigFastSwing =
+      hasWebcamData && webcamStrokePathSw > 1.05 && peakWristSpeed > 4.2;
 
-    // Rule A: Ultra-soft touch dropshot (catches gentle FH & BH dropshots with any face angle)
-    const isUltraSoftDrop =
-      swing.swingSpeedMps < 1.25 && swing.peakGyroDps < 175 && camSlowOk;
+    // Rule A: Soft touch dropshot (gentle IMU speed/G + not a big fast camera swing)
+    const isSoftDrop =
+      !camBigFastSwing &&
+      swing.swingSpeedMps < 1.60 &&
+      swing.peakAccelG < 1.65 &&
+      swing.peakGyroDps < 320 &&
+      camSlowOk;
 
-    // Rule B: Controlled open/flat carve dropshot (real BH slices exceed 1.68 m/s or 210 deg/s)
+    // Rule B: Camera-confirmed compact dropshot (short arm stroke + moderate-soft IMU power)
+    const isCameraCompactDrop =
+      camCompact &&
+      power <= 0.56 &&
+      swing.swingSpeedMps < 2.15 &&
+      swing.peakAccelG < 2.05;
+
+    // Rule C: Controlled soft-to-medium dropshot (pure IMU fallback & gentle open carve)
     const isControlledDrop =
-      swing.swingSpeedMps < 1.68 &&
-      swing.peakGyroDps < 210 &&
+      !camBigFastSwing &&
       power <= this.config.dropshotPowerMax &&
-      (effFaceOpen > 0.12 || spinScore <= 0.12);
+      swing.swingSpeedMps < 1.95 &&
+      swing.peakAccelG < 1.90 &&
+      swing.peakGyroDps < 350 &&
+      camSlowOk &&
+      (effFaceOpen > 0.02 || spinScore <= 0.25);
 
     let shotType: HumanShotType;
     let rotation: number;
     let confidence: number;
 
-    if (isUltraSoftDrop || isControlledDrop) {
+    if (isSoftDrop || isCameraCompactDrop || isControlledDrop) {
       shotType = 'dropshot';
       rotation = clamp(-0.25 - 0.35 * Math.max(0, effFaceOpen), -0.65, -0.2);
-      const speedMargin = clamp((1.68 - swing.swingSpeedMps) / 1.0, 0, 1);
+      const speedMargin = clamp((1.95 - swing.swingSpeedMps) / 1.1, 0, 1);
       confidence = clamp(0.68 + speedMargin * 0.28, 0.62, 0.96);
     } else if (
       spinScore < this.config.sliceThreshold ||
-      (v.z < -0.22 && effFaceOpen > 0.18)
+      (v.z < -0.22 && effFaceOpen > 0.16)
     ) {
       shotType = 'slice';
       rotation = clamp(Math.min(-0.22, spinScore), -1, -0.22);
@@ -403,18 +565,12 @@ export class ImuSwingClassifier {
       );
     }
 
-    // 5. World-frame aim angle (-1 left .. +1 right)
+    // 5. 100% Grip-Agnostic World-Frame Aim Angle (-1 left .. +1 right)
     const velDeg = (Math.atan2(v.x, Math.max(0.35, Math.abs(v.y) + 0.15)) * 180) / Math.PI;
-    const hitNx = hitSign * n.x;
-    const hitNy = hitSign * n.y;
-    const faceDeg = (Math.atan2(hitNx, Math.max(0.25, Math.abs(hitNy) + 0.15)) * 180) / Math.PI;
-    const wV = clamp((swing.swingSpeedMps - 0.5) / 1.5, 0.25, 0.65);
-    const wF = 0.85 - wV;
-    const yawAngle = clamp(-swing.worldYawAccumDeg / 45, -1, 1);
-
+    const yawToPeak = swing.worldYawToPeakDeg ?? swing.worldYawAccumDeg;
+    const yawAngle = clamp(-yawToPeak / 45, -1, 1);
     const angle =
-      yawSign *
-      clamp(wV * clamp(velDeg / 42, -1, 1) + wF * clamp(faceDeg / 38, -1, 1) + 0.15 * yawAngle, -1, 1);
+      yawSign * clamp(0.65 * clamp(velDeg / 42, -1, 1) + 0.35 * yawAngle, -1, 1);
 
     if (commitAsLastShot) {
       this.lastClassifiedShot = shotType;
@@ -425,13 +581,17 @@ export class ImuSwingClassifier {
 
   /**
    * Process one raw 100 Hz 6-axis M5Stack IMU sample.
-   * Optional `isTakingBackCrossBody` flag from WebcamArmTracker vetoes soft-path
-   * false triggers while the player is simply crossing their arm over to prepare a backhand.
+   * - `isTakingBackCrossBody`: optional flag from WebcamArmTracker that vetoes soft-path
+   *   false triggers while the player is crossing their arm over to prepare a backhand.
+   * - `allowSoftImuDropshot`: when `false` (e.g. webcam swing detector is active and
+   *   handles soft dropshots visually), ONLY the rock-solid `armGyroDps` (260 deg/s)
+   *   `bleController.ts` gyro-peak detector fires. Defaults to `true` for IMU-only mode.
    */
   ingest(
     sample: RawImuSample,
     nowMs = performance.now(),
     isTakingBackCrossBody = false,
+    allowSoftImuDropshot = true,
   ): RawClassifiedSwing | null {
     const dtSec =
       this.lastSampleMs === null ? 0.01 : clamp((nowMs - this.lastSampleMs) / 1000, 0.002, 0.1);
@@ -505,19 +665,121 @@ export class ImuSwingClassifier {
     }
 
     // Step C: ZEROED & READY TO PLAY (6-DOF Madgwick Quaternion AHRS)
+    // 1. Bias-Immune Raw Stillness Detector (runs BEFORE bias subtraction!)
+    //    Even if the M5 reboots/reconnects and its resting gyro offset jumps by 300+ deg/s,
+    //    peak-to-peak raw spread stays ~0.02g / ~2 deg/s while stationary -> auto-heals bias in 0.12s!
+    this.rawWindow.push({
+      t: nowMs,
+      ax: sample.ax,
+      ay: sample.ay,
+      az: sample.az,
+      gx: sample.gx,
+      gy: sample.gy,
+      gz: sample.gz,
+    });
+    while (this.rawWindow.length > 15 || (this.rawWindow.length > 2 && nowMs - this.rawWindow[0].t > 160)) {
+      this.rawWindow.shift();
+    }
+
+    let rawAccRange = 0;
+    let rawGyroRange = 0;
+    let rawMeanAx = sample.ax;
+    let rawMeanAy = sample.ay;
+    let rawMeanAz = sample.az;
+    let rawMeanGx = sample.gx;
+    let rawMeanGy = sample.gy;
+    let rawMeanGz = sample.gz;
+
+    if (this.rawWindow.length >= 4) {
+      let minAx = Infinity, maxAx = -Infinity;
+      let minAy = Infinity, maxAy = -Infinity;
+      let minAz = Infinity, maxAz = -Infinity;
+      let minGx = Infinity, maxGx = -Infinity;
+      let minGy = Infinity, maxGy = -Infinity;
+      let minGz = Infinity, maxGz = -Infinity;
+      let sAx = 0, sAy = 0, sAz = 0, sGx = 0, sGy = 0, sGz = 0;
+      for (const p of this.rawWindow) {
+        if (p.ax < minAx) minAx = p.ax;
+        if (p.ax > maxAx) maxAx = p.ax;
+        if (p.ay < minAy) minAy = p.ay;
+        if (p.ay > maxAy) maxAy = p.ay;
+        if (p.az < minAz) minAz = p.az;
+        if (p.az > maxAz) maxAz = p.az;
+        if (p.gx < minGx) minGx = p.gx;
+        if (p.gx > maxGx) maxGx = p.gx;
+        if (p.gy < minGy) minGy = p.gy;
+        if (p.gy > maxGy) maxGy = p.gy;
+        if (p.gz < minGz) minGz = p.gz;
+        if (p.gz > maxGz) maxGz = p.gz;
+        sAx += p.ax; sAy += p.ay; sAz += p.az;
+        sGx += p.gx; sGy += p.gy; sGz += p.gz;
+      }
+      const n = this.rawWindow.length;
+      rawMeanAx = sAx / n;
+      rawMeanAy = sAy / n;
+      rawMeanAz = sAz / n;
+      rawMeanGx = sGx / n;
+      rawMeanGy = sGy / n;
+      rawMeanGz = sGz / n;
+      rawAccRange = Math.hypot(maxAx - minAx, maxAy - minAy, maxAz - minAz);
+      rawGyroRange = Math.hypot(maxGx - minGx, maxGy - minGy, maxGz - minGz);
+    }
+
+    const rawQuietNow = this.rawWindow.length >= 6 && rawAccRange < 0.09 && rawGyroRange < 14;
+    if (rawQuietNow) {
+      if (this.rawStillSinceMs === null) this.rawStillSinceMs = nowMs;
+    } else {
+      this.rawStillSinceMs = null;
+    }
+    const isRawStill = this.rawStillSinceMs !== null && nowMs - this.rawStillSinceMs >= 110;
+
+    // Auto-heal resting gyro offset jump (e.g. +311 -> -144 deg/s after BLE disconnect/M5 reset!)
+    if (isRawStill) {
+      const biasErr = Math.hypot(
+        rawMeanGx - this.gyroBiasX,
+        rawMeanGy - this.gyroBiasY,
+        rawMeanGz - this.gyroBiasZ,
+      );
+      if (biasErr > 20) {
+        // Large hardware bias jump detected while completely motionless -> snap immediately!
+        this.gyroBiasX = rawMeanGx;
+        this.gyroBiasY = rawMeanGy;
+        this.gyroBiasZ = rawMeanGz;
+        this.ahrs.alignGravityOnly(rawMeanAx, rawMeanAy, rawMeanAz);
+        this.localAccelMag = this.ahrs.getRestAccelMag();
+        this.aBiasX = 0;
+        this.aBiasY = 0;
+        this.aBiasZ = 0;
+        this.vLiveX = 0;
+        this.vLiveY = 0;
+        this.vLiveZ = 0;
+        if (this.state === 'armed') {
+          this.state = 'idle';
+          this.dropPulseSinceMs = null;
+          this.pendingEarlyGuess = null;
+        }
+      } else {
+        const bAlpha = 0.08;
+        this.gyroBiasX += bAlpha * (rawMeanGx - this.gyroBiasX);
+        this.gyroBiasY += bAlpha * (rawMeanGy - this.gyroBiasY);
+        this.gyroBiasZ += bAlpha * (rawMeanGz - this.gyroBiasZ);
+      }
+    }
+
     const gx = sample.gx - this.gyroBiasX;
     const gy = sample.gy - this.gyroBiasY;
     const gz = sample.gz - this.gyroBiasZ;
 
     const ahrsOut = this.ahrs.update(sample.ax, sample.ay, sample.az, gx, gy, gz, dtSec);
     const rawWorld = ahrsOut.worldLinearAccel;
-    const gyroRateDps = Math.hypot(gx, gy, gz);
+    const gyroRateDps = isRawStill ? 0 : Math.hypot(gx, gy, gz);
     const rawAccMag = Math.hypot(sample.ax, sample.ay, sample.az);
 
     // Track & remove anisotropic MPU6886 axis-scale DC offset (0.82g..1.20g across axes!)
-    // Only updates when gyro is calm (< 65 deg/s) so crisp swings & dropshots are NEVER eaten!
-    if (this.state !== 'armed' && gyroRateDps < 65) {
-      const biasAlpha = 0.05;
+    // ONLY updates when truly calm (gyro < 28 deg/s AND accelDelta < 0.08g) so soft
+    // dropshots (75-180 deg/s, 0.7g) are NEVER eaten by the baseline tracker!
+    if (this.state !== 'armed' && (isRawStill || (gyroRateDps < 28 && accelDelta < 0.08))) {
+      const biasAlpha = isRawStill ? 0.16 : 0.06;
       this.aBiasX += biasAlpha * (rawWorld.x - this.aBiasX);
       this.aBiasY += biasAlpha * (rawWorld.y - this.aBiasY);
       this.aBiasZ += biasAlpha * (rawWorld.z - this.aBiasZ);
@@ -525,13 +787,15 @@ export class ImuSwingClassifier {
     }
 
     // Rotation-proof scalar dynamic G (0.00g during pure wrist twists even if gyro has scale error!)
-    const scalarDynG = Math.abs(rawAccMag - this.localAccelMag);
+    const scalarDynG = isRawStill ? 0 : Math.abs(rawAccMag - this.localAccelMag);
 
-    const aWorld: Vec3 = {
-      x: rawWorld.x - this.aBiasX,
-      y: rawWorld.y - this.aBiasY,
-      z: rawWorld.z - this.aBiasZ,
-    };
+    const aWorld: Vec3 = isRawStill
+      ? { x: 0, y: 0, z: 0 }
+      : {
+          x: rawWorld.x - this.aBiasX,
+          y: rawWorld.y - this.aBiasY,
+          z: rawWorld.z - this.aBiasZ,
+        };
     const linAccelMag = Math.hypot(aWorld.x, aWorld.y, aWorld.z);
 
     // Slow online gyro bias tracking when genuinely stationary
@@ -559,6 +823,15 @@ export class ImuSwingClassifier {
     }
     const liveSpeedMps = Math.hypot(this.vLiveX, this.vLiveY, this.vLiveZ);
 
+    // World-vertical yaw integration (CCW/+ = left, CW/- = right)
+    // Widen clamp to [-160, 160] so a 110° follow-through returning to neutral
+    // never saturates and creates a permanent yaw offset!
+    const worldYawDps = Math.abs(ahrsOut.worldGyro.z) > 4.0 ? ahrsOut.worldGyro.z : 0;
+    this.relYawDeg = clamp(this.relYawDeg + worldYawDps * dtSec, -160, 160);
+    if (this.state === 'idle' && linAccelMag < 0.18 && gyroRateDps < 15) {
+      this.relYawDeg *= 1 - 0.45 * dtSec;
+    }
+
     // Maintain 140 ms pre-trigger ring buffer
     this.ring.push({
       t: nowMs,
@@ -570,31 +843,42 @@ export class ImuSwingClassifier {
         y: ahrsOut.worldFaceNormal.y,
         z: ahrsOut.worldFaceNormal.z,
       },
+      racketUp: {
+        x: ahrsOut.worldRacketUp.x,
+        y: ahrsOut.worldRacketUp.y,
+        z: ahrsOut.worldRacketUp.z,
+      },
       gyroDps: gyroRateDps,
+      worldYawDps,
+      relYawDeg: this.relYawDeg,
     });
     while (this.ring.length > 0 && nowMs - this.ring[0].t > RING_WINDOW_MS) {
       this.ring.shift();
     }
 
-    // World-vertical yaw integration (CCW/+ = left, CW/- = right)
-    const worldYawDps = Math.abs(ahrsOut.worldGyro.z) > 4.0 ? ahrsOut.worldGyro.z : 0;
-    this.relYawDeg = clamp(this.relYawDeg + worldYawDps * dtSec, -75, 75);
-    if (this.state === 'idle' && linAccelMag < 0.18 && gyroRateDps < 15) {
-      this.relYawDeg *= 1 - 0.45 * dtSec;
-    }
-
     const yawSign = this.config.invertAngle ? 1 : -1;
     const rotSign = this.config.invertRotation ? -1 : 1;
 
+    // 100% Grip-Agnostic live rotation gauge: at ZERO, worldRacketUp = (0, 0, +1),
+    // so horizontal projection is identically 0.00 for every grip orientation!
+    const vLiveHoriz = Math.hypot(this.vLiveX, this.vLiveY);
+    const liveTiltProject =
+      vLiveHoriz >= 0.20
+        ? (ahrsOut.worldRacketUp.x * this.vLiveX + ahrsOut.worldRacketUp.y * this.vLiveY) /
+          vLiveHoriz
+        : -ahrsOut.worldRacketUp.y;
+    const liveFaceDelta = clamp(liveTiltProject * 1.4, -1, 1);
+
     const filteredAngle = this.angleFilter.filter(clamp((yawSign * this.relYawDeg) / 45, -1, 1), nowMs);
-    const filteredRotation = this.rotFilter.filter(
-      clamp(rotSign * (-ahrsOut.worldFaceNormal.z * 1.5), -1, 1),
-      nowMs,
-    );
+    const filteredRotation = this.rotFilter.filter(clamp(rotSign * liveFaceDelta, -1, 1), nowMs);
+    const liveGyroPower =
+      gyroRateDps < 35
+        ? 0
+        : clamp(((gyroRateDps - 240) / 1100) * 0.8 + 0.2, 0.05, 1.0);
     const livePower = clamp(
-      0.45 * clamp(liveSpeedMps / 4.2, 0, 1) +
-        0.30 * clamp(linAccelMag / Math.max(0.5, this.config.maxAccelG), 0, 1) +
-        0.25 * clamp(gyroRateDps / Math.max(50, this.config.maxGyroDps), 0, 1),
+      0.40 * liveGyroPower +
+        0.35 * clamp(liveSpeedMps / 4.2, 0, 1) +
+        0.25 * clamp(linAccelMag / Math.max(0.5, this.config.maxAccelG), 0, 1),
       0,
       1,
     );
@@ -605,12 +889,12 @@ export class ImuSwingClassifier {
       angle: filteredAngle,
       linearAccelG: linAccelMag,
       gyroRateDps,
-      rawPitchDeg: ahrsOut.faceTiltDeg,
+      rawPitchDeg: ahrsOut.racketTiltDeg,
       rawRollDeg: ahrsOut.faceTiltDeg,
       rawYawDeg: this.relYawDeg,
     };
 
-    // Single-trigger-per-swing state machine (650ms cooldown + quiet exit + hard ceiling)
+    // Single-trigger-per-swing state machine (~550ms cooldown + quiet exit + hard ceiling)
     if (this.state === 'cooldown') {
       const isQuiet = linAccelMag < 0.25 && gyroRateDps < 55;
       if (isQuiet) {
@@ -638,28 +922,45 @@ export class ImuSwingClassifier {
       gyroRateDps / Math.max(20, this.config.armGyroDps);
 
     if (this.state === 'idle') {
-      // Require REAL translational acceleration (`scalarDynG >= 0.28g`, immune to pure wrist twists!)
-      // in addition to 3D world-frame accel + gyro so turning/adjusting grip NEVER false-triggers!
-      const fastSwing =
-        linAccelMag >= this.config.armAccelG &&
-        scalarDynG >= 0.35 &&
-        gyroRateDps >= this.config.armGyroDps;
+      // HARD BLOCK: if bias-immune raw stillness detector sees motionless sensor, NEVER arm!
+      if (isRawStill) {
+        this.dropPulseSinceMs = null;
+        return null;
+      }
 
-      // Path 2: Deliberate soft dropshot (FH & BH) — requires vector accel, scalar translational
-      // accel (>= 0.16g — 3x above pure wrist-twist noise, catches gentle forward dropshots!),
-      // gyro, AND real 3D speed sustained >= 35ms.
-      const deliberateDrop =
+      // Path 1: bleController.ts battle-tested Peak Gyro Swing Trigger!
+      // Starts tracking when bias-corrected spin >= armGyroDps (default 260 deg/s, well above
+      // casual hand movement & slow backswing prep < 180 deg/s) with real dynamic raw change
+      // (rawGyroRange >= 90 deg/s, rawAccRange >= 0.35g) and modest linAccelMag >= 0.45g
+      // so fast swings ALWAYS trigger regardless of grip orientation.
+      const minFastAccelG = Math.min(0.45, this.config.armAccelG);
+      const fastSwing =
+        gyroRateDps >= this.config.armGyroDps &&
+        linAccelMag >= minFastAccelG &&
+        rawGyroRange >= 90 &&
+        rawAccRange >= 0.35;
+
+      // Path 2: Optional IMU-only soft dropshot path (gated by allowSoftImuDropshot;
+      // disabled when webcam swing detector is active and already handles soft dropshots visually).
+      const dropHasRealTranslation =
+        scalarDynG >= 0.14 || (linAccelMag >= 0.60 && liveSpeedMps >= 0.20);
+      const dropPulseActive =
+        allowSoftImuDropshot &&
         !isTakingBackCrossBody &&
         linAccelMag >= this.config.dropAccelG &&
-        scalarDynG >= 0.16 &&
+        dropHasRealTranslation &&
         gyroRateDps >= this.config.dropGyroDps &&
-        liveSpeedMps >= this.config.dropMinSpeedMps;
+        rawAccRange >= 0.34 &&
+        rawGyroRange >= 45;
 
       let softSwingArmed = false;
-      if (deliberateDrop) {
+      if (dropPulseActive) {
         if (this.dropPulseSinceMs === null) {
           this.dropPulseSinceMs = nowMs;
-        } else if (nowMs - this.dropPulseSinceMs >= 35) {
+        } else if (
+          nowMs - this.dropPulseSinceMs >= 20 &&
+          liveSpeedMps >= this.config.dropMinSpeedMps
+        ) {
           softSwingArmed = true;
         }
       } else {
@@ -667,18 +968,33 @@ export class ImuSwingClassifier {
       }
 
       if (fastSwing || softSwingArmed) {
-        this.armSwingFromRing(nowMs, linAccelMag, gyroRateDps, energy, worldYawDps * dtSec, ahrsOut.worldFaceNormal);
+        this.armSwingFromRing(
+          nowMs,
+          linAccelMag,
+          gyroRateDps,
+          energy,
+          worldYawDps,
+          dtSec,
+          ahrsOut.worldFaceNormal,
+          ahrsOut.worldRacketUp,
+          softSwingArmed && !fastSwing,
+        );
       }
       return null;
     }
 
-    // state === 'armed': trapezoid-integrate 3D world velocity & track exact t_peak!
+    // state === 'armed': trapezoid-integrate 3D world velocity & follow bleController.ts gyro peak!
     this.vIntX += 0.5 * (this.prevIntAx + aWorld.x) * G_TO_MPS2 * dtSec;
     this.vIntY += 0.5 * (this.prevIntAy + aWorld.y) * G_TO_MPS2 * dtSec;
     this.vIntZ += 0.5 * (this.prevIntAz + aWorld.z) * G_TO_MPS2 * dtSec;
     this.prevIntAx = aWorld.x;
     this.prevIntAy = aWorld.y;
     this.prevIntAz = aWorld.z;
+
+    this.swingYawAccumDeg += worldYawDps * dtSec;
+    if (Math.abs(worldYawDps) > Math.abs(this.peakWorldYawDps)) {
+      this.peakWorldYawDps = worldYawDps;
+    }
 
     const speedNow = Math.hypot(this.vIntX, this.vIntY, this.vIntZ);
     if (speedNow >= this.peakSpeedMps) {
@@ -690,12 +1006,23 @@ export class ImuSwingClassifier {
         y: ahrsOut.worldFaceNormal.y,
         z: ahrsOut.worldFaceNormal.z,
       };
+      this.racketUpAtPeak = {
+        x: ahrsOut.worldRacketUp.x,
+        y: ahrsOut.worldRacketUp.y,
+        z: ahrsOut.worldRacketUp.z,
+      };
+      this.swingYawToPeakDeg = this.swingYawAccumDeg;
     }
 
     if (linAccelMag > this.peakAccelG) this.peakAccelG = linAccelMag;
-    if (gyroRateDps > this.peakGyroDps) this.peakGyroDps = gyroRateDps;
+    if (gyroRateDps > this.peakGyroDps) {
+      this.peakGyroDps = gyroRateDps;
+      this.gyroPeakMs = nowMs;
+      this.samplesSinceGyroPeak = 0;
+    } else {
+      this.samplesSinceGyroPeak += 1;
+    }
     if (energy > this.peakEnergy) this.peakEnergy = energy;
-    this.swingYawAccumDeg += worldYawDps * dtSec;
 
     const elapsedMs = nowMs - this.swingStartMs;
 
@@ -714,37 +1041,61 @@ export class ImuSwingClassifier {
           y: ahrsOut.worldFaceNormal.y,
           z: ahrsOut.worldFaceNormal.z,
         },
+        racketUp: {
+          x: ahrsOut.worldRacketUp.x,
+          y: ahrsOut.worldRacketUp.y,
+          z: ahrsOut.worldRacketUp.z,
+        },
+        earlyYawDeg: this.swingYawAccumDeg,
+        preSwingRelYawDeg: this.preSwingRelYawDeg,
         vLive: { x: this.vIntX, y: this.vIntY, z: this.vIntZ },
         peakAccelG: this.peakAccelG,
         peakGyroDps: this.peakGyroDps,
       };
     }
 
-    // End swing strictly after peak passes (or 190ms cap)
-    const passedPeak = elapsedMs >= 55 && linAccelMag < this.peakAccelG * 0.45;
+    // bleController.ts peak-hold termination rule:
+    // End swing when spin drops below 60% of peak (after >= 45ms), OR 12 samples (~120ms)
+    // pass without a new gyro peak, OR 190ms safety cap is reached.
+    const passedGyroPeak =
+      (elapsedMs >= 45 && gyroRateDps < 0.60 * this.peakGyroDps) ||
+      this.samplesSinceGyroPeak >= 12;
     const maxWindowHit = elapsedMs >= 190;
 
-    if (passedPeak || maxWindowHit) {
+    if (passedGyroPeak || maxWindowHit) {
       this.state = 'cooldown';
       this.cooldownUntilMs = nowMs + this.config.cooldownMs;
       this.cooldownMaxUntilMs = nowMs + this.config.cooldownMs + 200;
       this.quietSinceMs = null;
 
+      const isFastGyroSwing = this.peakGyroDps >= this.config.armGyroDps;
       if (
-        this.peakAccelG < this.config.dropAccelG * 0.9 &&
-        this.peakGyroDps < 180
+        isFastGyroSwing
+          ? this.peakAccelG < 0.40 || this.peakSpeedMps < 0.22
+          : this.peakAccelG < this.config.dropAccelG * 0.90 ||
+            this.peakGyroDps < this.config.dropGyroDps * 0.90 ||
+            this.peakSpeedMps < this.config.dropMinSpeedMps
       ) {
         return null;
       }
 
+      const contactPeakMs =
+        this.gyroPeakMs >= this.swingStartMs
+          ? Math.max(this.swingPeakMs, this.gyroPeakMs)
+          : this.swingPeakMs;
+
       const rawSwing: RawClassifiedSwing = {
         swingStartMs: this.swingStartMs,
-        swingPeakMs: this.swingPeakMs,
+        swingPeakMs: contactPeakMs,
         swingEndMs: nowMs,
         vContact: { ...this.vContact },
         swingSpeedMps: this.peakSpeedMps,
         faceNormalAtPeak: { ...this.faceNormalAtPeak },
+        racketUpAtPeak: { ...this.racketUpAtPeak },
         worldYawAccumDeg: this.swingYawAccumDeg,
+        worldYawToPeakDeg: this.swingYawToPeakDeg,
+        peakWorldYawDps: this.peakWorldYawDps,
+        preSwingRelYawDeg: this.preSwingRelYawDeg,
         power: 0.5,
         angle: 0,
         peakAccelG: this.peakAccelG,
@@ -768,28 +1119,34 @@ export class ImuSwingClassifier {
   }
 
   /**
-   * Rewinds up to 40 ms into the pre-trigger ring buffer to find the local
-   * acceleration minimum (`t_onset`), then trapezoid-integrates 3D world velocity
-   * cleanly from `t_onset` to `nowMs`.
+   * Rewinds into the pre-trigger ring buffer (up to 95 ms for soft dropshots,
+   * 55 ms for fast swings) to find the local acceleration minimum (`t_onset`),
+   * then trapezoid-integrates 3D world velocity and world yaw cleanly from
+   * `t_onset` to `nowMs`.
    */
   private armSwingFromRing(
     nowMs: number,
     linAccelMag: number,
     gyroRateDps: number,
     energy: number,
-    yawDeltaDeg: number,
+    worldYawDps: number,
+    dtSec: number,
     curFaceNormal: Vec3,
+    curRacketUp: Vec3,
+    isSoftTrigger = false,
   ) {
     this.state = 'armed';
     this.dropPulseSinceMs = null;
     this.earlyGuessEmitted = false;
     this.pendingEarlyGuess = null;
 
-    // Find local |a| minimum within last 45ms
+    const rewindWindowMs = isSoftTrigger ? 95 : 55;
+
+    // Find local |a| minimum within rewindWindowMs
     let onsetIdx = this.ring.length - 1;
     let minMag = Infinity;
     for (let i = this.ring.length - 1; i >= 0; i--) {
-      if (nowMs - this.ring[i].t > 45) break;
+      if (nowMs - this.ring[i].t > rewindWindowMs) break;
       if (this.ring[i].aMag <= minMag) {
         minMag = this.ring[i].aMag;
         onsetIdx = i;
@@ -799,6 +1156,7 @@ export class ImuSwingClassifier {
     const onsetEntry = this.ring[onsetIdx];
     this.swingStartMs = onsetEntry ? onsetEntry.t : nowMs;
     this.armAccelAtStart = onsetEntry ? onsetEntry.aMag : linAccelMag;
+    this.preSwingRelYawDeg = onsetEntry ? onsetEntry.relYawDeg : this.relYawDeg;
 
     // Integrate cleanly from t_onset -> nowMs
     this.vIntX = 0;
@@ -808,10 +1166,17 @@ export class ImuSwingClassifier {
     this.swingPeakMs = this.swingStartMs;
     this.peakAccelG = linAccelMag;
     this.peakGyroDps = gyroRateDps;
+    this.gyroPeakMs = nowMs;
+    this.samplesSinceGyroPeak = 0;
     this.peakEnergy = energy;
-    this.swingYawAccumDeg = yawDeltaDeg;
+    this.swingYawAccumDeg = onsetEntry
+      ? onsetEntry.worldYawDps * onsetEntry.dtSec
+      : worldYawDps * dtSec;
+    this.swingYawToPeakDeg = this.swingYawAccumDeg;
+    this.peakWorldYawDps = onsetEntry ? onsetEntry.worldYawDps : worldYawDps;
     this.vContact = { x: 0, y: 0, z: 0 };
     this.faceNormalAtPeak = { ...curFaceNormal };
+    this.racketUpAtPeak = { ...curRacketUp };
 
     if (onsetEntry) {
       this.prevIntAx = onsetEntry.aWorld.x;
@@ -827,15 +1192,26 @@ export class ImuSwingClassifier {
         this.prevIntAy = cur.aWorld.y;
         this.prevIntAz = cur.aWorld.z;
 
+        this.swingYawAccumDeg += cur.worldYawDps * cur.dtSec;
+        if (Math.abs(cur.worldYawDps) > Math.abs(this.peakWorldYawDps)) {
+          this.peakWorldYawDps = cur.worldYawDps;
+        }
+
         const spd = Math.hypot(this.vIntX, this.vIntY, this.vIntZ);
         if (spd >= this.peakSpeedMps) {
           this.peakSpeedMps = spd;
           this.swingPeakMs = cur.t;
           this.vContact = { x: this.vIntX, y: this.vIntY, z: this.vIntZ };
           this.faceNormalAtPeak = { ...cur.faceNormal };
+          this.racketUpAtPeak = { ...cur.racketUp };
+          this.swingYawToPeakDeg = this.swingYawAccumDeg;
         }
         if (cur.aMag > this.peakAccelG) this.peakAccelG = cur.aMag;
-        if (cur.gyroDps > this.peakGyroDps) this.peakGyroDps = cur.gyroDps;
+        if (cur.gyroDps >= this.peakGyroDps) {
+          this.peakGyroDps = cur.gyroDps;
+          this.gyroPeakMs = cur.t;
+          this.samplesSinceGyroPeak = 0;
+        }
       }
     }
   }

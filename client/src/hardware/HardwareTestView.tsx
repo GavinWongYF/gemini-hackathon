@@ -177,7 +177,7 @@ export const HardwareTestView: React.FC = () => {
             {ctrl.calibration === 'zeroing'
               ? `Zeroing ${Math.round(ctrl.calibrationProgress * 100)}%`
               : ctrl.calibration === 'ready'
-                ? 'Re-Zero Racket (BtnA / R)'
+                ? 'Re-Zero / Full Reset (BtnA / R)'
                 : 'ZERO RACKET (BtnA / R)'}
           </button>
         </div>
@@ -200,20 +200,21 @@ export const HardwareTestView: React.FC = () => {
           </span>
         ) : ctrl.calibration === 'ready' ? (
           <span>
-            <strong>RACKET ZEROED &amp; READY</strong> — Swing deliberately for{' '}
+            <strong>RACKET ZEROED &amp; READY</strong> — Grip-agnostic 6-DOF + Webcam active:{' '}
             <strong>Topspin</strong> (low→high), <strong>Slice</strong> (high→low chop), or{' '}
             <strong>Dropshot</strong> (short soft tap). Press <strong>BtnA</strong> or{' '}
-            <strong>R</strong> to re-zero for a new player.
+            <strong>R</strong> anytime to fully reset &amp; re-zero for any grip or player.
           </span>
         ) : (
           <div style={styles.zeroBannerInner}>
             <span>
               <strong>
                 {ctrl.calibration === 'zeroing'
-                  ? 'Hold Steady — Zeroing Pose…'
-                  : 'Step 1: Zero Your Racket'}
+                  ? 'Hold Steady — Zeroing Grip & Bias…'
+                  : 'Step 1: Zero Your Racket (Any Grip!)'}
               </strong>{' '}
-              — Hold M5 horizontally across your body like a tennis racket, then press{' '}
+              — Hold the M5 in front of you like a tennis racket in{' '}
+              <strong>ANY comfortable grip</strong>, keep still 0.3s, and press{' '}
               <strong>BtnA</strong> or click <strong>ZERO NOW</strong>.
             </span>
             <button style={styles.zeroBannerBtn} onClick={() => hardwareInput.zeroRacket()}>
@@ -398,20 +399,20 @@ export const HardwareTestView: React.FC = () => {
               )}
             </div>
             <SliderRow
-              label={`Min Swing G (${config.dropAccelG.toFixed(2)}g — higher = fewer accidental hits)`}
-              min={0.3}
-              max={1.4}
-              step={0.05}
-              value={config.dropAccelG}
-              onChange={(v) => updateCfg('dropAccelG', v)}
+              label={`Swing Trigger Gyro (${config.armGyroDps.toFixed(0)}°/s — higher = ignores backswings)`}
+              min={140}
+              max={450}
+              step={10}
+              value={config.armGyroDps}
+              onChange={(v) => updateCfg('armGyroDps', v)}
             />
             <SliderRow
-              label={`Min Swing Gyro (${config.dropGyroDps.toFixed(0)}°/s)`}
-              min={45}
-              max={200}
-              step={5}
-              value={config.dropGyroDps}
-              onChange={(v) => updateCfg('dropGyroDps', v)}
+              label={`Min Swing G (${config.armAccelG.toFixed(2)}g)`}
+              min={0.35}
+              max={1.6}
+              step={0.05}
+              value={config.armAccelG}
+              onChange={(v) => updateCfg('armAccelG', v)}
             />
             <SliderRow
               label={`Dropshot Max Power (${config.dropshotPowerMax.toFixed(2)})`}

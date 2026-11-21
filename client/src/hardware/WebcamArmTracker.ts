@@ -1,6 +1,9 @@
 import { FilesetResolver, PoseLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import type { ArmZone, StrokeWing, WebcamArmState } from '@shared/contracts';
 import { OneEuroFilter } from './OneEuroFilter';
+import { TennisSwingDetector, type DetectedWebcamSwing } from './TennisSwingDetector';
+
+export type { DetectedWebcamSwing } from './TennisSwingDetector';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -19,13 +22,15 @@ export interface ArmHistoryPoint {
   armZone: ArmZone;
   wing: StrokeWing;
   crossedOver: boolean;
-  /** Unbiased continuous torso-relative hand X in shoulder-widths (+ = dominant side, - = cross-body) */
+  /** Unbiased continuous torso-relative wrist X in shoulder-widths (+ = dominant side, - = cross-body) */
+  wristSignedX?: number;
+  /** Alias for wristSignedX (+ = dominant side, - = cross-body) */
   handSignedX?: number;
   /** Unbiased continuous torso-relative elbow X in shoulder-widths (+ = dominant side, - = cross-body) */
   elbowSignedX?: number;
-  /** Torso-relative vertical hand height scaled to reference shoulder width (+ = higher) */
+  /** Torso-relative vertical wrist height scaled to reference shoulder width (+ = higher) */
   handRelY?: number;
-  /** Torso-relative hand coordinates in shoulder-widths for body-relative wrist speed */
+  /** Torso-relative wrist coordinates in shoulder-widths for body-relative wrist speed */
   relXSw?: number;
   relYSw?: number;
   /** Instantaneous body-relative wrist speed in shoulder-widths/sec */
@@ -34,6 +39,18 @@ export interface ArmHistoryPoint {
 
 export interface SwingArmSummary {
   wing: StrokeWing;
+  /** Confidence (0..1) in webcam wing classification (low ~0.38-0.45 in neutral center so IMU yaw can vote) */
+  wingConfidence: number;
+  /** Most dominant-side torso-relative wrist position in shoulder-widths during stroke window */
+  maxSignedX: number;
+  /** Most cross-body torso-relative wrist position in shoulder-widths during stroke window */
+  minSignedX: number;
+  /** Torso-relative wrist X at start of stroke window (+ = dominant side, - = cross-body) */
+  startSignedX: number;
+  /** Torso-relative wrist X at end of stroke window (+ = dominant side, - = cross-body) */
+  endSignedX: number;
+  /** Signed wrist travel (endSignedX - startSignedX; + = toward dominant side, - = toward cross-body) */
+  signedDeltaX: number;
   armZone: ArmZone;
   armX: number;
   /** Vertical wrist travel during swing (+ = low-to-high topspin, - = high-to-low slice) */
@@ -43,10 +60,27 @@ export interface SwingArmSummary {
   hasWebcamData: boolean;
   /** Peak body-relative wrist speed in shoulder-widths/sec during the swing window */
   peakWristSpeed: number;
+  /** Total 2D wrist travel distance in shoulder-widths during the forward stroke (compact < 0.72 = dropshot) */
+  strokePathSw: number;
   /** Clean vertical swing path trend ('up' = topspin, 'down' = slice, 'flat' = level/dropshot) */
   verticalTrend: 'up' | 'down' | 'flat';
   /** True when the player's pre-swing setup was crossed over toward the backhand side */
   setupCrossedOver: boolean;
+}
+
+export interface PreSwingTakeback {
+  wing: StrokeWing;
+  wingConfidence?: number;
+  maxSignedX?: number;
+  minSignedX?: number;
+  armZone: ArmZone;
+  armX: number;
+  backswing: number;
+  deltaArmY: number;
+  hasWebcamData: boolean;
+  setupCrossedOver?: boolean;
+  peakWristSpeed?: number;
+  verticalTrend?: 'up' | 'down' | 'flat';
 }
 
 export interface WebcamTrackerSnapshot {
@@ -58,6 +92,7 @@ export interface WebcamTrackerSnapshot {
 }
 
 type TrackerListener = (snapshot: WebcamTrackerSnapshot) => void;
+type WebcamSwingListener = (evt: DetectedWebcamSwing) => void;
 
 /**
  * Tracks the stationary player's dominant arm position (LEFT / CENTER / RIGHT)
@@ -87,6 +122,8 @@ export class WebcamArmTracker {
   private frameTimes: number[] = [];
   private history: ArmHistoryPoint[] = [];
   private listeners = new Set<TrackerListener>();
+  private swingListeners = new Set<WebcamSwingListener>();
+  readonly swingDetector = new TennisSwingDetector('right');
 
   // Camera mirror auto-detection (+1 = unmirrored, -1 = pre-mirrored front camera)
   private cameraSign: 1 | -1 = 1;
@@ -124,8 +161,20 @@ export class WebcamArmTracker {
     return () => this.listeners.delete(listener);
   }
 
+  onWebcamSwing(cb: (evt: DetectedWebcamSwing) => void): () => void {
+    this.swingListeners.add(cb);
+    return () => {
+      this.swingListeners.delete(cb);
+    };
+  }
+
+  resetSwingDetector(): void {
+    this.swingDetector.reset();
+  }
+
   setHandedness(handedness: 'right' | 'left') {
     this.snapshot.arm.handedness = handedness;
+    this.swingDetector.setHandedness(handedness);
     this.snapshot.arm.wing = this.inferStaticWing(this.snapshot.arm.armX, false, handedness);
     this.emitStatus();
   }
@@ -134,17 +183,7 @@ export class WebcamArmTracker {
    * Captures pre-swing takeback state at `swing_start` (~100-160ms before ball contact):
    * wing, armZone, armX, normalized backswing amplitude (0..1), and setup kinematics.
    */
-  getPreSwingTakeback(swingStartMs: number): {
-    wing: StrokeWing;
-    armZone: ArmZone;
-    armX: number;
-    backswing: number;
-    deltaArmY: number;
-    hasWebcamData: boolean;
-    setupCrossedOver?: boolean;
-    peakWristSpeed?: number;
-    verticalTrend?: 'up' | 'down' | 'flat';
-  } {
+  getPreSwingTakeback(swingStartMs: number): PreSwingTakeback {
     const latestHistoryT =
       this.history.length > 0 ? this.history[this.history.length - 1].t : performance.now();
     const summaryEndMs = Math.max(swingStartMs, latestHistoryT);
@@ -152,6 +191,9 @@ export class WebcamArmTracker {
     if (!summary.hasWebcamData) {
       return {
         wing: this.snapshot.arm.wing,
+        wingConfidence: 0,
+        maxSignedX: 0,
+        minSignedX: 0,
         armZone: this.snapshot.arm.armZone,
         armX: this.snapshot.arm.armX,
         backswing: clamp(Math.abs(this.snapshot.arm.armX) * 0.9, 0.2, 1),
@@ -165,12 +207,17 @@ export class WebcamArmTracker {
 
     const handSign = this.snapshot.arm.handedness === 'right' ? 1 : -1;
     const windowPts = this.history.filter(
-      (p) => p.t >= swingStartMs - 340 && p.t <= swingStartMs + 30,
+      (p) => p.t >= swingStartMs - 280 && p.t <= swingStartMs + 40,
     );
-    let minX = summary.armX * handSign;
-    let maxX = summary.armX * handSign;
+    let minX = summary.minSignedX;
+    let maxX = summary.maxSignedX;
     for (const p of windowPts) {
-      const x = p.handSignedX !== undefined ? p.handSignedX : p.armX * handSign;
+      const x =
+        p.wristSignedX !== undefined
+          ? p.wristSignedX
+          : p.handSignedX !== undefined
+            ? p.handSignedX
+            : p.armX * handSign;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
     }
@@ -178,6 +225,9 @@ export class WebcamArmTracker {
     const backswing = clamp(Math.abs(summary.armX) * 0.65 + takebackSpan * 0.75, 0.12, 1);
     return {
       wing: summary.wing,
+      wingConfidence: summary.wingConfidence,
+      maxSignedX: summary.maxSignedX,
+      minSignedX: summary.minSignedX,
       armZone: summary.armZone,
       armX: summary.armX,
       backswing,
@@ -191,143 +241,134 @@ export class WebcamArmTracker {
 
   /**
    * Resolves true Forehand vs Backhand, vertical swing path, and wrist speed for a swing.
-   * Uses the pre-swing takeback extremum across [swingStartMs - 340, swingStartMs - 20]
-   * + stroke travel during [swingStartMs - 60, swingEndMs] so:
+   * Accounts for ~80-120 ms webcam pipeline latency behind the 100 Hz BLE IMU by evaluating
+   * strokeWindow across [swingStartMs - 280, effectiveEndMs + 40] and using temporal order
+   * between dominant-side extremum (maxSample) and cross-body extremum (minSample) so:
+   *  - Neutral ready-pose and forehand-side setups NEVER false-trigger backhand.
    *  - Follow-through crossing the centerline NEVER flips forehand <-> backhand.
-   *  - Crossed-over backhands (even with elbow on dominant side) stay backhand.
-   *  - Short, gentle backhand dropshots stay backhand with low peakWristSpeed.
+   *  - Cross-body backhands (including compact BH dropshots) stay backhand.
    */
-  getSwingArmSummary(swingStartMs: number, swingEndMs: number): SwingArmSummary {
+  getSwingArmSummary(
+    swingStartMs: number,
+    swingEndMs: number,
+    lagCompensationMs = 0,
+  ): SwingArmSummary {
     const handedness = this.snapshot.arm.handedness;
     const handSign = handedness === 'right' ? 1 : -1;
-    const effectiveEndMs = Math.max(swingEndMs, swingStartMs);
+    const tStartCam = swingStartMs + lagCompensationMs;
+    const tEndCam = Math.max(swingEndMs, swingStartMs) + lagCompensationMs;
 
     const recent = this.history.filter(
-      (p) => p.t >= swingStartMs - 400 && p.t <= effectiveEndMs + 40,
+      (p) => p.t >= tStartCam - 600 && p.t <= tEndCam + 45,
     );
 
     if (!this.snapshot.arm.active || recent.length < 2) {
+      const curSigned = this.snapshot.arm.armX * handSign;
       return {
         wing: this.snapshot.arm.wing,
+        wingConfidence: 0,
+        maxSignedX: curSigned,
+        minSignedX: curSigned,
+        startSignedX: curSigned,
+        endSignedX: curSigned,
+        signedDeltaX: 0,
         armZone: this.snapshot.arm.armZone,
         armX: this.snapshot.arm.armX,
         deltaArmY: 0,
         deltaArmX: 0,
         hasWebcamData: false,
         peakWristSpeed: 0,
+        strokePathSw: 0,
         verticalTrend: 'flat',
         setupCrossedOver: false,
       };
     }
 
     const getSignedX = (p: ArmHistoryPoint) =>
-      p.handSignedX !== undefined ? p.handSignedX : p.armX * handSign;
+      p.wristSignedX !== undefined
+        ? p.wristSignedX
+        : p.handSignedX !== undefined
+          ? p.handSignedX
+          : p.armX * handSign;
     const getRelY = (p: ArmHistoryPoint) =>
       p.handRelY !== undefined ? p.handRelY : p.armY;
 
-    // 1. Pre-swing takeback window [swingStartMs - 340, swingStartMs - 20]
-    let preSamples = recent.filter(
-      (p) => p.t >= swingStartMs - 340 && p.t <= swingStartMs - 20,
+    // 1. Time-aligned stroke window: when lagCompensationMs (~90ms) is provided after
+    //    the settle wait, [tStartCam - 220, tEndCam + 35] aligns directly with the physical swing!
+    const preLookbackMs = lagCompensationMs > 0 ? 220 : 280;
+    let strokeWindow = recent.filter(
+      (p) => p.t >= tStartCam - preLookbackMs && p.t <= tEndCam + 40,
     );
-    if (preSamples.length === 0) {
-      preSamples = recent.filter((p) => p.t <= swingStartMs + 20);
-    }
-    if (preSamples.length === 0) {
-      preSamples = [recent[0]];
+    if (strokeWindow.length === 0) {
+      strokeWindow = recent.slice(-4);
     }
 
-    const latePreRaw = preSamples.filter((p) => p.t >= swingStartMs - 200);
-    const latePreSamples = latePreRaw.length > 0 ? latePreRaw : preSamples;
-
-    // Find takeback extrema across [swingStartMs - 340, swingStartMs - 20]
-    let maxPreSample = preSamples[0]; // Most dominant-side (FH takeback extremum)
-    let minPreSample = preSamples[0]; // Most cross-body (BH takeback extremum)
-    let preCrossedCount = 0;
-    for (const p of preSamples) {
+    // 2. Find maxSample (most dominant-side) and minSample (most cross-body) across strokeWindow
+    let maxSample = strokeWindow[0];
+    let minSample = strokeWindow[0];
+    for (const p of strokeWindow) {
       const sx = getSignedX(p);
-      if (sx > getSignedX(maxPreSample)) maxPreSample = p;
-      if (sx < getSignedX(minPreSample)) minPreSample = p;
-      if (p.crossedOver) preCrossedCount++;
+      if (sx > getSignedX(maxSample)) maxSample = p;
+      if (sx < getSignedX(minSample)) minSample = p;
     }
 
-    let lateCrossedCount = 0;
-    for (const p of latePreSamples) {
-      if (p.crossedOver) lateCrossedCount++;
+    const maxSignedX = getSignedX(maxSample);
+    const minSignedX = getSignedX(minSample);
+
+    // 3. Time-ordered Forehand vs Backhand resolution
+    let wing: StrokeWing;
+    let wingConfidence: number;
+
+    if (minSignedX >= -0.06) {
+      // Rule 1: Wrist never meaningfully crossed past midline onto backhand side
+      wing = 'forehand';
+      wingConfidence =
+        maxSignedX > 0.10 ? 0.70 + clamp(maxSignedX / 0.5, 0, 0.25) : 0.45;
+    } else if (minSignedX < -0.08 && maxSignedX < 0.14) {
+      // Rule 2: Wrist clearly crossed onto backhand side and never coiled onto forehand side
+      wing = 'backhand';
+      wingConfidence = 0.72 + clamp((-minSignedX - 0.08) / 0.45, 0, 0.24);
+    } else if (maxSignedX >= 0.14 && minSignedX < -0.08) {
+      // Rule 3: Both sides visited (e.g., big follow-through) -> temporal order decides!
+      if (maxSample.t <= minSample.t) {
+        // Started on dominant side, finished across body on follow-through
+        wing = 'forehand';
+        wingConfidence = 0.86;
+      } else {
+        // Started coiled across midline, uncoiled toward dominant side
+        wing = 'backhand';
+        wingConfidence = 0.86;
+      }
+    } else {
+      // Rule 4: Narrow center band (-0.08 <= minSignedX < -0.06) -> low-confidence tie-breaker so IMU yaw can vote
+      wing = (maxSignedX + minSignedX) * 0.5 >= -0.04 ? 'forehand' : 'backhand';
+      wingConfidence = 0.38;
     }
 
-    const maxPreSignedX = getSignedX(maxPreSample);
-    const minPreSignedX = getSignedX(minPreSample);
-    const preCrossRatio = preCrossedCount / preSamples.length;
-    const lateCrossRatio = lateCrossedCount / latePreSamples.length;
-    const lateMidSample = latePreSamples[Math.floor(latePreSamples.length / 2)];
-    const setupSignedX = getSignedX(lateMidSample);
+    const setupCrossedOver = wing === 'backhand' && (minSignedX < -0.08 || minSample.crossedOver);
+    const activeSample = wing === 'backhand' ? minSample : maxSample;
+    const armZone = this.classifyZoneWithHysteresis(
+      activeSample.armX,
+      this.snapshot.arm.armZone,
+    );
 
-    // Did the player set up crossed over before forward swing acceleration?
-    // Checking latePreSamples prevents an old neutral ready-pose frame from overriding
-    // a clear forehand coil, while staying rock-solid when the player starts crossed over.
-    const setupCrossedOver =
-      lateCrossRatio >= 0.45 || (preCrossRatio >= 0.5 && maxPreSignedX < 0.35);
-
-    // 2. Actual stroke travel during [swingStartMs - 60, swingEndMs]
-    let swingSamples = recent.filter(
-      (p) => p.t >= swingStartMs - 60 && p.t <= effectiveEndMs + 20,
+    // 4. Forward-stroke travel & vertical swing path across the time-aligned forward window
+    const fwdPreMs = lagCompensationMs > 0 ? 45 : 110;
+    let swingSamples = strokeWindow.filter(
+      (p) => p.t >= tStartCam - fwdPreMs && p.t <= tEndCam + 35,
     );
     if (swingSamples.length < 2) {
-      swingSamples = recent.filter(
-        (p) => p.t >= swingStartMs - 110 && p.t <= effectiveEndMs + 40,
-      );
-    }
-    if (swingSamples.length < 2) {
-      swingSamples = recent;
+      swingSamples = strokeWindow.length >= 2 ? strokeWindow : recent.slice(-4);
     }
 
     const strokeStart = swingSamples[0];
     const strokeEnd = swingSamples[swingSamples.length - 1];
-    const signedDeltaX = getSignedX(strokeEnd) - getSignedX(strokeStart);
+    const startSignedX = getSignedX(strokeStart);
+    const endSignedX = getSignedX(strokeEnd);
+    const signedDeltaX = endSignedX - startSignedX;
     const deltaArmX = signedDeltaX * handSign;
 
-    // 3. Forehand vs Backhand resolution (zero follow-through flips, rock-solid BH dropshots)
-    let wing: StrokeWing;
-    if (setupCrossedOver) {
-      // Player started crossed over (including elbow-on-right crossed BH & short BH dropshots!).
-      // Stay backhand unless there was both a wide dominant-side coil AND a huge right->left sweep.
-      const unmistakableForehandOverride =
-        maxPreSignedX > 0.55 && signedDeltaX < -0.45 && setupSignedX > 0.35;
-      wing = unmistakableForehandOverride ? 'forehand' : 'backhand';
-    } else if (minPreSignedX < -0.08 && signedDeltaX > 0.16) {
-      // Wound up past midline toward backhand side and uncoiling left -> right
-      wing = 'backhand';
-    } else if (maxPreSignedX > 0.28 && signedDeltaX <= 0.18) {
-      // Coiled cleanly on forehand side (full FH, compact FH, or soft FH dropshot);
-      // cross-body follow-through has negative signedDeltaX so it NEVER flips to backhand!
-      wing = 'forehand';
-    } else if (Math.abs(signedDeltaX) > 0.18) {
-      // Ambiguous center setup -> actual stroke direction breaks tie cleanly:
-      // +signedDeltaX (left->right for righty) = backhand; -signedDeltaX (right->left) = forehand
-      wing = signedDeltaX > 0 ? 'backhand' : 'forehand';
-    } else if (setupSignedX < 0.08) {
-      wing = 'backhand';
-    } else {
-      wing = 'forehand';
-    }
-
-    // Report the pre-swing hitting zone & takeback extremum armX (never follow-through!)
-    const takebackSample = wing === 'backhand' ? minPreSample : maxPreSample;
-    let armZone: ArmZone;
-    if (wing === 'backhand') {
-      armZone = handedness === 'right' ? 'left' : 'right';
-    } else if (maxPreSignedX > 0.15) {
-      armZone = handedness === 'right' ? 'right' : 'left';
-    } else {
-      armZone = takebackSample.armZone;
-    }
-
-    // 4. Vertical swing path across [swingStartMs - 50, swingEndMs]
-    const vertWindowRaw = recent.filter(
-      (p) => p.t >= swingStartMs - 55 && p.t <= effectiveEndMs + 15,
-    );
-    const vertWindow = vertWindowRaw.length >= 2 ? vertWindowRaw : swingSamples;
-
+    const vertWindow = swingSamples;
     const yStart = getRelY(vertWindow[0]);
     const yEnd = getRelY(vertWindow[vertWindow.length - 1]);
     const netDeltaY = yEnd - yStart;
@@ -361,11 +402,13 @@ export class WebcamArmTracker {
     const verticalTrend: 'up' | 'down' | 'flat' =
       deltaArmY > 0.03 ? 'up' : deltaArmY < -0.03 ? 'down' : 'flat';
 
-    // 5. Peak body-relative wrist speed (shoulder-widths/sec) during the swing window
+    // 5. Peak body-relative wrist speed & total 2D wrist path length (shoulder-widths)
+    const speedWindow = swingSamples.length >= 2 ? swingSamples : strokeWindow;
     const stepSpeeds: number[] = [];
-    for (let i = 1; i < swingSamples.length; i++) {
-      const prev = swingSamples[i - 1];
-      const curr = swingSamples[i];
+    let strokePathSw = 0;
+    for (let i = 1; i < speedWindow.length; i++) {
+      const prev = speedWindow[i - 1];
+      const curr = speedWindow[i];
       const dtMs = curr.t - prev.t;
       if (dtMs < 8 || dtMs > 250) continue;
       if (
@@ -376,13 +419,17 @@ export class WebcamArmTracker {
       ) {
         const dx = curr.relXSw - prev.relXSw;
         const dy = curr.relYSw - prev.relYSw;
-        stepSpeeds.push(Math.hypot(dx, dy) / (dtMs / 1000));
+        const stepDist = Math.hypot(dx, dy);
+        strokePathSw += stepDist;
+        stepSpeeds.push(stepDist / (dtMs / 1000));
       } else if (curr.wristSpeed !== undefined) {
         stepSpeeds.push(curr.wristSpeed);
       } else {
         const dx = curr.armX - prev.armX;
         const dy = curr.armY - prev.armY;
-        stepSpeeds.push(Math.hypot(dx, dy) / (dtMs / 1000));
+        const stepDist = Math.hypot(dx, dy);
+        strokePathSw += stepDist;
+        stepSpeeds.push(stepDist / (dtMs / 1000));
       }
     }
 
@@ -396,19 +443,26 @@ export class WebcamArmTracker {
     } else if (stepSpeeds.length === 1) {
       peakWristSpeed = stepSpeeds[0];
     } else {
-      for (const p of swingSamples) {
+      for (const p of speedWindow) {
         if ((p.wristSpeed ?? 0) > peakWristSpeed) peakWristSpeed = p.wristSpeed ?? 0;
       }
     }
 
     return {
       wing,
+      wingConfidence,
+      maxSignedX,
+      minSignedX,
+      startSignedX,
+      endSignedX,
+      signedDeltaX,
       armZone,
-      armX: takebackSample.armX,
+      armX: activeSample.armX,
       deltaArmY,
       deltaArmX,
       hasWebcamData: true,
       peakWristSpeed,
+      strokePathSw,
       verticalTrend,
       setupCrossedOver,
     };
@@ -507,6 +561,7 @@ export class WebcamArmTracker {
     this.lastKinematics = null;
     this.cameraSign = 1;
     this.cameraSignVotes = [];
+    this.swingDetector.reset();
     this.armXFilter.reset();
     this.armYFilter.reset();
     this.snapshot.arm.active = false;
@@ -532,7 +587,14 @@ export class WebcamArmTracker {
 
     const ctx = this.captureCanvas.getContext('2d');
     if (!ctx) return null;
+    ctx.save();
+    if (this.cameraSign === -1) {
+      // Normalize pre-mirrored webcam feed so Gemini player_cam always receives unmirrored left/right orientation
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+    }
     ctx.drawImage(video, 0, 0, w, h);
+    ctx.restore();
     const dataUrl = this.captureCanvas.toDataURL('image/jpeg', quality);
     const commaIdx = dataUrl.indexOf(',');
     return commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
@@ -616,12 +678,8 @@ export class WebcamArmTracker {
     const isRight = handedness === 'right';
     const handSign = isRight ? 1 : -1;
 
-    const domShoulder = isRight ? rightShoulder : leftShoulder;
-    const oppShoulder = isRight ? leftShoulder : rightShoulder;
     const elbow = isRight ? landmarks[14] : landmarks[13];
     const wrist = isRight ? landmarks[16] : landmarks[15];
-    const pinky = isRight ? landmarks[18] : landmarks[17];
-    const indexTip = isRight ? landmarks[20] : landmarks[19];
 
     if (
       !elbow ||
@@ -633,35 +691,6 @@ export class WebcamArmTracker {
     ) {
       // Skip occluded wrist frame without polluting swing history
       return;
-    }
-
-    // Estimate racket-hand center from wrist + visible index/pinky knuckles
-    const indexOk = Boolean(
-      indexTip &&
-        Number.isFinite(indexTip.x) &&
-        Number.isFinite(indexTip.y) &&
-        (indexTip.visibility ?? 0.9) >= 0.3,
-    );
-    const pinkyOk = Boolean(
-      pinky &&
-        Number.isFinite(pinky.x) &&
-        Number.isFinite(pinky.y) &&
-        (pinky.visibility ?? 0.9) >= 0.3,
-    );
-
-    let handX = wrist.x;
-    let handY = wrist.y;
-    if (indexOk && pinkyOk) {
-      const knuckleX = (indexTip.x + pinky.x) * 0.5;
-      const knuckleY = (indexTip.y + pinky.y) * 0.5;
-      handX = wrist.x * 0.6 + knuckleX * 0.4;
-      handY = wrist.y * 0.6 + knuckleY * 0.4;
-    } else if (indexOk) {
-      handX = wrist.x * 0.65 + indexTip.x * 0.35;
-      handY = wrist.y * 0.65 + indexTip.y * 0.35;
-    } else if (pinkyOk) {
-      handX = wrist.x * 0.65 + pinky.x * 0.35;
-      handY = wrist.y * 0.65 + pinky.y * 0.35;
     }
 
     // Torso centerline (weighted shoulders + hips when hips are visible in frame)
@@ -690,32 +719,26 @@ export class WebcamArmTracker {
     const torsoMidX = hipsVisible ? shoulderMidX * 0.72 + hipMidX * 0.28 : shoulderMidX;
 
     // Player-centric X in shoulder-widths (+ = player's right, - = player's left)
-    const toPlayerX = (imgX: number) => ((torsoMidX - imgX) * this.cameraSign) / shoulderWidth;
-    const handPlayerX = toPlayerX(handX);
-    const wristPlayerX = toPlayerX(wrist.x);
-    const elbowPlayerX = toPlayerX(elbow.x);
+    // Use wrist.x directly (do NOT blend indexTip/pinky inward into lateral X)
+    const wristPlayerX = ((torsoMidX - wrist.x) * this.cameraSign) / shoulderWidth;
+    const elbowPlayerX = ((torsoMidX - elbow.x) * this.cameraSign) / shoulderWidth;
 
     // Handedness-signed X (+ = dominant side, - = cross-body / backhand side)
-    const handSignedX = handPlayerX * handSign;
     const wristSignedX = wristPlayerX * handSign;
+    const handSignedX = wristSignedX;
     const elbowSignedX = elbowPlayerX * handSign;
 
-    // Bulletproof Cross-Body Backhand Detection:
-    //  a) Hand or wrist crosses torso midline toward non-dominant side (handSignedX < 0.08)
-    //  b) Forearm angles inward across chest even while elbow stays on dominant side
-    //     ((elbowSignedX - handSignedX) > 0.16 && handSignedX < 0.42)
-    //  c) Hand is horizontally closer to the opposite shoulder than the dominant shoulder
-    const crossedMidline = handSignedX < 0.08 || wristSignedX < 0.08;
-    const forearmCrossedInward = elbowSignedX - handSignedX > 0.16 && handSignedX < 0.42;
-    const closerToOppShoulder =
-      Math.abs(handX - oppShoulder.x) < Math.abs(handX - domShoulder.x);
-    const crossedOver = crossedMidline || forearmCrossedInward || closerToOppShoulder;
+    // Cross-body backhand detection (immune to neutral ready pose & forehand-side elbow bend)
+    const crossedMidline = wristSignedX < -0.10;
+    const forearmCrossedInward =
+      wristSignedX < -0.03 && elbowSignedX - wristSignedX > 0.24;
+    const crossedOver = crossedMidline || forearmCrossedInward;
 
     // Body-relative kinematics (shoulder-widths & distance-normalized vertical height)
-    const relXSw = handPlayerX;
-    const relYSw = (shoulderMidY - handY) / shoulderWidth;
+    const relXSw = wristPlayerX;
+    const relYSw = (shoulderMidY - wrist.y) / shoulderWidth;
     const refScale = clamp(0.22 / shoulderWidth, 0.8, 1.8);
-    const handRelY = (shoulderMidY - handY) * refScale;
+    const handRelY = (shoulderMidY - wrist.y) * refScale;
 
     let wristSpeed = 0;
     if (this.lastKinematics && nowMs > this.lastKinematics.t) {
@@ -728,14 +751,9 @@ export class WebcamArmTracker {
     }
     this.lastKinematics = { t: nowMs, relXSw, relYSw };
 
-    // Smooth UI/avatar armX (biased cleanly onto backhand side when forearm is crossed over)
-    const scaledPlayerX = handPlayerX / 1.1;
-    const effectiveArmX = crossedOver
-      ? Math.min(scaledPlayerX * handSign, -0.28) * handSign
-      : scaledPlayerX;
-
-    const rawArmX = clamp(effectiveArmX, -1, 1);
-    const rawArmY = clamp(1 - handY, 0, 1);
+    // Continuous, unbiased armX (±0.22 zone threshold = ±0.143 shoulder-widths, keeping 'center' wide & stable)
+    const rawArmX = clamp(wristPlayerX / 0.65, -1, 1);
+    const rawArmY = clamp(1 - wrist.y, 0, 1);
 
     const filteredArmX = this.armXFilter.filter(rawArmX, nowMs);
     const filteredArmY = this.armYFilter.filter(rawArmY, nowMs);
@@ -763,6 +781,7 @@ export class WebcamArmTracker {
       armZone,
       wing,
       crossedOver,
+      wristSignedX,
       handSignedX,
       elbowSignedX,
       handRelY,
@@ -772,6 +791,13 @@ export class WebcamArmTracker {
     });
     while (this.history.length > 0 && nowMs - this.history[0].t > 900) {
       this.history.shift();
+    }
+
+    const detectedSwing = this.swingDetector.update(landmarks, nowMs, nowMs);
+    if (detectedSwing) {
+      for (const cb of this.swingListeners) {
+        cb(detectedSwing);
+      }
     }
   }
 
@@ -801,7 +827,7 @@ export class WebcamArmTracker {
   ): StrokeWing {
     if (crossedOver) return 'backhand';
     const handSign = handedness === 'right' ? 1 : -1;
-    return armX * handSign >= 0.04 ? 'forehand' : 'backhand';
+    return armX * handSign < -0.10 ? 'backhand' : 'forehand';
   }
 
   private emitStatus() {
