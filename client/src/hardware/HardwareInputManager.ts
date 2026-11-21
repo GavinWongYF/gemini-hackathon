@@ -573,7 +573,15 @@ export class HardwareInputManager {
     this.state.imuHz = this.imuPacketTimestamps.length;
     this.state.rawImu = sample;
 
-    const swing = this.classifier.ingest(sample, now);
+    // Anti-takeback veto: when webcam sees player merely crossing arm over chest
+    // into backhand setup (not swinging forward), suppress soft dropshot false-triggers.
+    const camSnap = this.webcam.getSnapshot();
+    const isTakingBackCrossBody =
+      camSnap.arm.active &&
+      this.webcam.getPreSwingTakeback(now).setupCrossedOver === false &&
+      camSnap.arm.wing === 'backhand';
+
+    const swing = this.classifier.ingest(sample, now, isTakingBackCrossBody);
     const early = this.classifier.consumeEarlySwingGuess();
     this.state.gyro = this.classifier.getLatestReading();
     this.state.calibration = this.classifier.getCalibrationPhase();
@@ -585,32 +593,21 @@ export class HardwareInputManager {
 
     if (early) {
       const pre = this.webcam.getPreSwingTakeback(early.swingStartMs);
-      const earlyResolved = this.classifier.resolveShot(
-        {
-          swingStartMs: early.swingStartMs,
-          swingEndMs: early.nowMs,
-          power: early.initialSpeed,
-          angle: this.state.gyro.angle,
-          preFaceOpen: early.preFaceOpen,
-          earlyVerticalG: early.earlyVerticalG,
-          peakAccelG: early.peakAccelG,
-          peakGyroDps: early.peakGyroDps,
-          shotType: 'topspin',
-          rotation: 0,
-          confidence: 0.65,
-        },
-        pre.wing,
-        pre.deltaArmY,
-        pre.hasWebcamData,
-      );
       const backswing = pre.hasWebcamData
         ? clamp(pre.backswing * 0.7 + early.imuBackswing * 0.3, 0.1, 1)
         : early.imuBackswing;
+      const earlyResolved = this.classifier.resolveEarlyGuess(
+        early,
+        pre.wing,
+        backswing,
+        pre.deltaArmY,
+        pre.hasWebcamData,
+      );
       this.emitSwingStart({
         id: this.swingCounter + 1,
         timestampMs: Date.now(),
         earlyGuess: earlyResolved.shotType,
-        confidence: clamp(earlyResolved.confidence * 0.88, 0.35, 0.95),
+        confidence: clamp(earlyResolved.confidence, 0.35, 0.95),
         backswing,
         initialSpeed: early.initialSpeed,
         wing: pre.wing,
@@ -622,19 +619,21 @@ export class HardwareInputManager {
 
     if (swing) {
       this.lastSwingMs = now;
-      // Resolve true pre-swing Forehand vs Backhand & vertical swing path (never fooled by follow-through!)
-      const armSummary = this.webcam.getSwingArmSummary(swing.swingStartMs, swing.swingEndMs);
+      // Pass swingPeakMs (contact instant, BEFORE follow-through drop!) to WebcamArmTracker
+      const armSummary = this.webcam.getSwingArmSummary(swing.swingStartMs, swing.swingPeakMs);
       const armFallback = this.getState().arm;
       const wing = armSummary.hasWebcamData ? armSummary.wing : armFallback.wing;
       const armZone = armSummary.hasWebcamData ? armSummary.armZone : armFallback.armZone;
       const armX = armSummary.hasWebcamData ? armSummary.armX : armFallback.armX;
 
-      // Universal wing-aware + webcam-fused shot classification (works for every player!)
+      // Universal 6-combo (FH/BH × topspin/slice/dropshot) 3D world-frame + webcam resolution
       const resolved = this.classifier.resolveShot(
         swing,
         wing,
         armSummary.deltaArmY,
         armSummary.hasWebcamData,
+        armSummary.peakWristSpeed,
+        true,
       );
 
       this.state.shotType = resolved.shotType;
@@ -646,9 +645,9 @@ export class HardwareInputManager {
         wing,
         armZone,
         armX,
-        power: swing.power,
+        power: resolved.power,
         rotation: resolved.rotation,
-        angle: swing.angle,
+        angle: resolved.angle,
         confidence: resolved.confidence,
         peakAccelG: swing.peakAccelG,
         peakGyroDps: swing.peakGyroDps,
