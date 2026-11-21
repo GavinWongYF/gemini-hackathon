@@ -1,0 +1,22 @@
+{
+  "url": "http://localhost:5191/?game",
+  "headed": false,
+  "note": "headless uses SwiftShader (software GL): capture_ms is pessimistic vs a real GPU",
+  "frames": [
+    {
+      "file": "game_1.jpg",
+      "bytes": 9561,
+      "capture_ms": 2038.5
+    },
+    {
+      "file": "game_2.jpg",
+      "bytes": 9612,
+      "capture_ms": 2407.3
+    },
+    {
+      "file": "game_3.jpg",
+      "bytes": 9597,
+      "capture_ms": 2477.6
+    }
+  ]
+}

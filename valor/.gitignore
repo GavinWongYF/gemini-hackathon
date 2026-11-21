@@ -1,0 +1,18 @@
+node_modules
+dist
+*.local
+.DS_Store
+.playwright-mcp/
+# build artifacts
+tsconfig.tsbuildinfo
+
+# env + spacetimedb build output
+.env
+.env.*
+!.env.example
+server/target/
+
+# Phase 6 smoke artifacts (regenerated on every `npm run smoke:mp` run).
+DEMO-VERIFICATION.md
+/tmp/valor-smoke-*.png
+recordings/

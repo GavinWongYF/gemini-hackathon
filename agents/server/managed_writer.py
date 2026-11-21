@@ -28,6 +28,7 @@ from types import ModuleType
 from typing import Any, Callable
 
 from server import config, contract
+from server.designer import world_settings
 from server.interfaces import Facts, Message, Proposal, Trace, trace_message
 from server.managed_client import DONE, ManagedClient, ManagedError, source, tokens
 
@@ -540,7 +541,10 @@ class ManagedAgentWriter:
             })
         candidates.sort(key=lambda c: (c["distance"] is None, c["distance"] or 0))
         attempts = [{key: line.get(key) for key in ("name", "player_win_share", "distance", "passed")} for line in history]
-        proposal.pop("settings", None)   # a writer changes rule sets only, never a game setting
+        world = world_settings(facts.get("setup") or {})
+        proposal["settings"] = {name: value for name, value in (proposal.get("settings") or {}).items() if name in world}
+        if not proposal["settings"]:   # a writer changes rule sets, and a world setting at most: never a number setting
+            proposal.pop("settings")
         sandbox_share = measured[kept].get("player_win_share")
         proposal["behaviour"] = {**behaviour, "version": version}
         proposal["tested"] = {

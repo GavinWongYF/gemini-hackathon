@@ -1,0 +1,94 @@
+// ─────────────────────────────────────────────────────────────────────────
+// FpvArms.tsx — first-person arms = the REAL rigged character holding the gun,
+// viewed from its own head. Reuses AnimatedCharacter (the same skinned model +
+// gun-in-hand the studio/bots use) so the hands are the actual modeled hands,
+// not procedural boxes.
+//
+// HOW: render the character in a group that tracks the camera every frame (so it
+// inherits look + recoil). Drop the rig ~eye-height so the HEAD lands at the
+// camera, then COLLAPSE the head/neck bones (scale→0) so the player's own face
+// doesn't fill the screen — leaving the aiming-idle arms + gun in view.
+//
+// animState is driven from the LOCAL entity (resolveAnimState) so the arms idle,
+// walk, run, fire and reload like everyone else — the "how it moves" polish.
+// ─────────────────────────────────────────────────────────────────────────
+
+import { useRef, useState } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { type Group, type Object3D } from "three";
+import { AnimatedCharacter } from "./AnimatedCharacter";
+import { Gun } from "../Gun";
+import { LOCAL_ID, resolveAnimState, type AnimState } from "./contracts";
+import { transforms, useGame } from "./stores";
+import { introCameraActive } from "./intro";
+
+// Rig placement relative to the camera (camera = the eyes). Tuned by eye in FPP.
+const RIG_POS: [number, number, number] = [0, -1.55, 0.06]; // drop to head, nudge fwd
+const RIG_YAW = Math.PI; // face the same way the camera looks (-Z)
+// Bones to collapse so the head/face never blocks the view (the body is one
+// skinned mesh, so shrinking these bones shrinks the vertices weighted to them).
+// The left forearm is hidden too: the aiming-idle clip leaves the left hand as an
+// open palm floating mid-screen in first person (a leftover from webcam mode).
+const HIDE_BONES = new Set(["mixamorigHead", "mixamorigNeck", "mixamorigLeftForeArm"]);
+
+// `animState` override: single-player omits it and the arms read the local
+// entity store (resolveAnimState). Multiplayer has no local physics store, so it
+// passes the server-derived clip state directly — without this the MP arms were
+// frozen in idle even while walking/reloading.
+export function FpvArms({ animState, url = "/models/character_a.glb" }: { animState?: AnimState; url?: string } = {}) {
+  const root = useRef<Group>(null);
+  const rig = useRef<Group>(null);
+  const camera = useThree((s) => s.camera);
+  const [anim, setAnim] = useState<AnimState>("idle");
+  const animRef = useRef<AnimState>("idle");
+  const headBones = useRef<Object3D[]>([]);
+
+  // Track the camera (priority 11 = after recoil's priority-10 write), keep the
+  // head collapsed, and pick the anim state from the local entity.
+  useFrame(() => {
+    const g = root.current;
+    if (g) {
+      g.position.copy(camera.position);
+      g.quaternion.copy(camera.quaternion);
+      // Hidden while the pre-round intro camera flies over the map (single
+      // player only: MP never enters the "intro" phase).
+      g.visible = !introCameraActive();
+    }
+    // Collapse head/neck so the player's own face never fills the screen. Find
+    // the bones once, then RE-ASSERT every frame — the animation mixer rewrites
+    // bone transforms each tick, so a one-shot scale gets clobbered.
+    if (headBones.current.length === 0 && rig.current) {
+      rig.current.traverse((o: Object3D) => {
+        if (HIDE_BONES.has(o.name)) headBones.current.push(o);
+        // The viewmodel (body + gun) never casts the sun's shadow: a floating
+        // headless body/gun shadow looks wrong and costs a shadow-pass draw.
+        if ((o as { isMesh?: boolean }).isMesh) o.castShadow = false;
+      });
+    }
+    for (const b of headBones.current) b.scale.setScalar(0.0001);
+    // Drive the arms: MP passes an explicit server-derived state; SP reads the
+    // local entity store (idle/walk/run/fire/reload).
+    let s: AnimState | null = null;
+    if (animState !== undefined) {
+      s = animState;
+    } else {
+      const e = useGame.getState().entities[LOCAL_ID];
+      const t = transforms[LOCAL_ID];
+      if (e && t) s = resolveAnimState(e, t);
+    }
+    if (s !== null && s !== animRef.current) { animRef.current = s; setAnim(s); }
+  }, 11);
+
+  return (
+    <group ref={root}>
+      <group ref={rig} position={RIG_POS} rotation={[0, RIG_YAW, 0]}>
+        <AnimatedCharacter
+          url={url}
+          animState={anim}
+          castShadows={false}
+          hold={<Gun length={0.22} variant="normal" />}
+        />
+      </group>
+    </group>
+  );
+}

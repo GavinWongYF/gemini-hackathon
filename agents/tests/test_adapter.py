@@ -190,7 +190,7 @@ async def test_facts_have_exactly_the_agreed_keys():
     match, _ = make_match(["player"])
     facts = A.gather_facts(match)
     assert set(facts) == {"setup", "goal", "behaviour", "values", "confidence", "value_about", "measures",
-                          "recent_rounds", "personas", "matchups", "counters", "earlier", "max_candidates"}
+                          "recent_rounds", "personas", "matchups", "counters", "earlier", "max_candidates", "world"}
     top = facts["counters"][0]
     assert (top["npc"], top["decision"], top["option"], top["against"]) == ("opponent", "shot_type", "lob", "net_rusher")
     assert top["edge"] == 0.35 and top["likeness"] == 0.7
@@ -1575,3 +1575,39 @@ def test_each_ease_of_a_setting_says_what_is_different_this_time():
     assert A.dial_place(step) == "It is 2 steps under where we began."
     assert A.dial_place({**step, "from": 0.94, "to": 0.85}) == "It is back where we began."
     assert A.dial_place({**step, "from": 0.67, "to": 0.65, "limit": True}) == "That is as low as it goes."
+
+
+def with_world(match: MatchState) -> MatchState:
+    match.setup["settings"]["obstacles"] = {
+        "about": "Extra obstacles placed on the court for the next round: up to 2 spot names.",
+        "options": ["net_left", "net_right", "baseline_mid"], "now": "none", "max_picks": 2}
+    return match
+
+
+async def test_a_writer_may_change_a_world_setting_to_answer_a_habit():
+    from server.contract import check_message
+    match, lines = make_match(["player"])
+    with_world(match)
+    calls: list[dict[str, Any]] = []
+    world = [{"setting": "obstacles", "picks": ["net_left", "net_left", "baseline_mid"],
+              "why": "You came in on 9 of 12 shots.", "expect": "Coming in should win you fewer points.", "habit": "h1"}]
+    update = await A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE], world=world), calls=calls)).adapt(match, "quick")
+    assert update is not None and update["settings"] == {"obstacles": ["net_left", "baseline_mid"]}
+    change = next(change for change in update["changes"] if change["where"] == "settings.obstacles")
+    assert change["from"] == [] and change["to"] == ["net_left", "baseline_mid"] and change["why"]
+    assert check_message(match.setup, update) == []
+    assert "Extra obstacles placed on the court" in calls[0]["prompt"]           # the model reads what the setting does
+    assert "world" in calls[0]["schema"]["properties"]
+    assert "opponent_speed" not in calls[0]["schema"]["properties"]["world"]["items"]["properties"]["setting"]["enum"]
+
+
+async def test_a_world_setting_that_breaks_the_contract_is_dropped():
+    match, _ = make_match(["player"])
+    with_world(match)
+    world = [{"setting": "obstacles", "picks": ["net_left", "net_right", "baseline_mid"], "why": "x", "expect": "y", "habit": "h1"}]
+    update = await A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE], world=world))).adapt(match, "quick")
+    assert update is not None and "settings" not in update
+    assert not any(change["where"].startswith("settings.") for change in update["changes"])
+    numeric = [{"setting": "opponent_speed", "picks": ["net_left"], "why": "x", "expect": "y", "habit": "h1"}]
+    update = await A.GeminiAdapter(ask=fake_ask(reply(new_rules=[LOB_RULE], world=numeric))).adapt(match, "quick")
+    assert update is not None and "settings" not in update

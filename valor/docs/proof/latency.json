@@ -1,0 +1,24 @@
+{
+  "note": "Measured in this harness on the offline stand-in (CPU, single thread). The Gemini rows are filled by --live against the real backend; null = not measured yet.",
+  "standin_event_to_player_read_ms": {
+    "p50": 0.003,
+    "p95": 0.015,
+    "n": 11508
+  },
+  "standin_round_end_to_decision_ms_incl_selfcheck": {
+    "p50": 131.686,
+    "p95": 481.205,
+    "n": 4200
+  },
+  "selfcheck_ms_per_candidate": {
+    "p50": 131.96,
+    "p95": 512.1,
+    "sims_per_brain": 60
+  },
+  "gemini": {
+    "event_to_player_read_ms": null,
+    "round_end_to_quick_update_ms": null,
+    "round_end_to_full_update_ms": null,
+    "frames": null
+  }
+}
