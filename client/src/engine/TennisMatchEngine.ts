@@ -1069,16 +1069,66 @@ export class TennisMatchEngine {
     this.startNextPoint();
   }
 
-  private updatePlayerMovement(_dt: number) {
-    // Player remains stationary at the baseline so all focus stays on physical M5 stroke classification
-    // (`forehand`/`backhand` x `topspin`/`slice`/`dropshot`) and the AI's adaptation to shot habits.
+  private updatePlayerMovement(dt: number) {
+    // Wii Sports Tennis style auto-footwork:
+    // - Completely decoupled from webcam wrist/arm motion (`playerArmX` never twitches the avatar!).
+    // - Smoothly auto-runs to the incoming ball's strike pocket (including stepping in for short dropshots),
+    //   plants early in `idle` ready stance so racket-ball visual contact lines up in 3D, and returns to
+    //   center baseline after hitting — while rally outcomes still depend 100% on shot-type matchups!
     const p = this.renderState.player;
-    p.x = 0;
-    p.z = COURT.PLAYER_START_Z;
-    p.vx = 0;
-    p.vz = 0;
-    if (this.renderState.phase === 'rally') {
-      p.animState = 'idle';
+    let targetX = 0;
+    let targetZ: number = COURT.PLAYER_START_Z;
+    let maxSpeed = 3.8; // calm recovery jog back to center baseline after hitting
+
+    if (this.renderState.phase === 'rally' && this.hitter === 'ai' && this.ballEngine.state.active) {
+      const b = this.ballEngine.state;
+      const land = this.renderState.ball.landingMarker;
+      maxSpeed = 7.6; // brisk Wii-Sports auto-positioning so avatar arrives & plants early
+
+      // Choose strike depth: step inside court for short dropshots/angles, stay at baseline for deep drives
+      if (land && land.z < 7.0) {
+        targetZ = clamp(land.z + 1.35, 5.4, COURT.PLAYER_START_Z);
+      } else {
+        targetZ = COURT.PLAYER_START_Z;
+      }
+
+      // Predict ball X at strikeZ and stand ~0.5m inside it so the 3D racket strings meet the ball cleanly
+      const dtToStrike = b.vz > 1.0 ? clamp((targetZ - b.z) / b.vz, 0, 0.9) : 0;
+      const estBallX =
+        b.z > 1.0
+          ? clamp(b.x + b.vx * dtToStrike, -5.0, 5.0)
+          : clamp((land?.x ?? b.x) * 1.06, -5.0, 5.0);
+      const racketSideOffset = estBallX >= 0 ? -0.52 : 0.48;
+      targetX = clamp(estBallX + racketSideOffset, -4.6, 4.6);
+    }
+
+    const dx = targetX - p.x;
+    const dz = targetZ - p.z;
+    const dist = Math.hypot(dx, dz);
+
+    // Clean 10cm settle deadband so once planted, the avatar holds rock-steady `idle` ready stance
+    if (dist > 0.1) {
+      const step = Math.min(dist, maxSpeed * dt);
+      p.vx = (dx / dist) * (step / dt);
+      p.vz = (dz / dist) * (step / dt);
+      p.x += (dx / dist) * step;
+      p.z += (dz / dist) * step;
+      if (this.renderState.phase === 'rally') {
+        p.animState =
+          Math.abs(p.vx) > Math.abs(p.vz)
+            ? p.vx > 0
+              ? 'run_right'
+              : 'run_left'
+            : p.vz < 0
+              ? 'run_forward'
+              : 'run_back';
+      }
+    } else {
+      p.vx = 0;
+      p.vz = 0;
+      if (this.renderState.phase === 'rally') {
+        p.animState = 'idle';
+      }
     }
   }
 
