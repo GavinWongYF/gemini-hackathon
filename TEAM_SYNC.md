@@ -27,3 +27,4 @@
    - `missed_swing` (`by: "player"`): `side`, `arm_zone`, `shot_type`, `power`, `reason` (`unreachable | too_early | too_late`).
 3. **One `pick()`:** Currently mirrored in `shared/agentProtocol.ts`; as soon as Felix pushes `agents/`, import `agents/sdk/js/pick.js` (and run `agents/sdk/test-vectors.json`) so both sides run one `pick()`.
 4. **`opponent_speed` (`0.65..1.25`, default `0.85`):** Controls opponent court movement speed **only** (never ball speed).
+5. **Enriched `practice_result.stats`:** Reports `average_exchanges`, `average_point_seconds`, `average_quality` (`0..1`), `missed_swings`, and `forced_errors` on every `practice_run` batch, and every `setup` field carries explicit reliability guidance in its `about` line.

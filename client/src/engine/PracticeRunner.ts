@@ -225,6 +225,10 @@ export function runPracticeBatch(
   let totalExchanges = 0;
   let totalPointSeconds = 0;
   let completedRounds = 0;
+  let playerShotCount = 0;
+  let playerQualitySum = 0;
+  let missedSwings = 0;
+  let forcedErrors = 0;
 
   const engine = new TennisMatchEngine(brain, {
     totalDemoPoints: req.rounds,
@@ -234,6 +238,19 @@ export function runPracticeBatch(
     enableDemoPauses: false,
     rng,
     sink: {
+      onAgentEvent: (evt) => {
+        if (evt.by !== 'player') return;
+        if (evt.name === 'missed_swing') {
+          missedSwings += 1;
+        } else if (evt.name === 'shot') {
+          playerShotCount += 1;
+          const q = typeof evt.data.quality === 'number' ? evt.data.quality : 0.75;
+          playerQualitySum += q;
+          if (evt.data.result === 'out' || evt.data.result === 'net') {
+            forcedErrors += 1;
+          }
+        }
+      },
       onAgentRoundEnd: (roundEnd) => {
         completedRounds += 1;
         totalExchanges += roundEnd.stats?.rally_length ?? 0;
@@ -356,6 +373,12 @@ export function runPracticeBatch(
       stats: {
         average_exchanges: Math.round((totalExchanges / roundsPlayed) * 100) / 100,
         average_point_seconds: Math.round((totalPointSeconds / roundsPlayed) * 100) / 100,
+        average_quality:
+          playerShotCount > 0
+            ? Math.round((playerQualitySum / playerShotCount) * 1000) / 1000
+            : 0,
+        missed_swings: missedSwings,
+        forced_errors: forcedErrors,
       },
     },
     durationMs: Math.round(elapsedMs * 100) / 100,
@@ -391,6 +414,10 @@ export function compareBehavioursHeadless(
     deltaPctPoints: Math.round((adaptOppWinRate - baseOppWinRate) * 1000) / 10,
     baselineAvgExchanges: baseRes.reply.stats?.average_exchanges ?? 0,
     adaptedAvgExchanges: adaptRes.reply.stats?.average_exchanges ?? 0,
+    baselineAvgQuality: baseRes.reply.stats?.average_quality ?? 0,
+    adaptedAvgQuality: adaptRes.reply.stats?.average_quality ?? 0,
+    baselineMissedSwings: baseRes.reply.stats?.missed_swings ?? 0,
+    adaptedMissedSwings: adaptRes.reply.stats?.missed_swings ?? 0,
     totalDurationMs: Math.round((baseRes.durationMs + adaptRes.durationMs) * 100) / 100,
   };
 }

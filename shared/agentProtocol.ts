@@ -372,62 +372,68 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
     },
     events: {
       swing_start: {
-        about: 'The player has started a swing (~100-160ms before ball contact).',
+        about:
+          'The player started a swing (~85-160ms before ball contact). High reliability on side and arm_zone (~92%); medium-high on backswing, initial_speed, and early_guess (~75-80% match with final shot — compare with shot to spot disguised tells).',
         fields: {
           early_guess: 'human_shot_type',
           confidence: {
             min: 0,
             max: 1,
-            about: 'How sure the IMU+pose classifier is of early_guess.',
+            about: 'Reliable. Classifier confidence in early_guess before contact.',
           },
           backswing: {
             min: 0,
             max: 1,
-            about: 'Pre-swing windup/takeback size (0 = compact/no windup, 1 = full wide windup).',
+            about: 'Reliable. Pre-swing windup/takeback size (0 = compact/no windup, 1 = big windup).',
           },
           initial_speed: {
             min: 0,
             max: 1,
-            about: 'Swing onset speed in the first 25ms (low on gentle dropshots, high on rips).',
+            about: 'Reliable. Swing onset speed in first 25ms (separates gentle dropshot taps from hard drives).',
           },
           side: ['forehand', 'backhand'],
           arm_zone: 'arm_zone',
         },
       },
       anticipate: {
-        about: 'The opponent reacted to the start of the player swing before contact.',
+        about: 'The opponent reacted to swing_start before ball contact.',
         fields: {
           move: ['stay', 'lean_left', 'lean_right', 'move_in', 'move_back'],
         },
       },
       shot: {
-        about: 'Either side hit the ball (emitted once per shot at racket-ball contact with solved landing zone and result).',
+        about:
+          'Either side hit the ball (emitted once per shot at racket-ball contact with solved landing zone and result). High-reliability labels: side, arm_zone, shot_type, timing, from, lands, result. For shot direction, use lands rather than angle.',
         fields: {
           rally: 'number',
           side: ['forehand', 'backhand'],
           arm_zone: 'arm_zone',
           shot_type: ['topspin', 'flat', 'slice', 'dropshot', 'lob'],
-          power: { min: 0, max: 1, about: 'How hard the swing was (M5 IMU peak accel + gyro).' },
+          power: {
+            min: 0,
+            max: 1,
+            about: 'High reliability. Normalized swing effort from M5 peak dynamic accel + gyro (0 = soft touch, 1 = max rip).',
+          },
           rotation: {
             min: -1,
             max: 1,
-            about: 'Spin fused from racket face + webcam vertical path. Below 0 is backspin/slice, above 0 is topspin.',
+            about: 'Medium-high reliability (slightly noisy near 0). Spin from webcam vertical path + racket face; below -0.25 is slice, above +0.2 is topspin.',
           },
           angle: {
             min: -1,
             max: 1,
-            about: 'Horizontal aim direction from gyro yaw. -1 is far left on screen, 1 is far right (noisier than lands zone).',
+            about: 'Noisy (gyro yaw can drift if feet shift mid-point) — weight lightly; use lands zone for shot direction.',
           },
           confidence: {
             min: 0,
             max: 1,
-            about: 'Classifier + webcam pose confidence in the player shot_type and side labels.',
+            about: 'High reliability. Classifier + pose confidence in the shot_type and side labels.',
           },
           timing: ['early', 'on_time', 'late'],
           quality: {
             min: 0,
             max: 1,
-            about: 'Contact quality based on lateral/depth reach and ball height (low when stretched or jammed).',
+            about: 'High reliability. Contact quality from lateral/depth reach and ball height (low when stretched or jammed, high when comfortable).',
           },
           from: 'zone',
           other_position: 'zone',
@@ -436,12 +442,13 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
         },
       },
       missed_swing: {
-        about: 'The player swung the physical racket during a rally but missed the ball.',
+        about:
+          'High reliability. The player physically swung the racket during a rally and missed the ball (strong signal of being fooled by a dropshot or stretched out of reach).',
         fields: {
           side: ['forehand', 'backhand'],
           arm_zone: 'arm_zone',
           shot_type: 'human_shot_type',
-          power: { min: 0, max: 1, about: 'How hard the missed swing was.' },
+          power: { min: 0, max: 1, about: 'High reliability. Effort of the missed swing.' },
           reason: ['unreachable', 'too_early', 'too_late'],
         },
       },
@@ -456,12 +463,12 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
       swing_backswing: {
         min: 0,
         max: 1,
-        about: 'How big the player backswing was at swing_start.',
+        about: 'Reliable. How big the player backswing was at swing_start.',
       },
       swing_initial_speed: {
         min: 0,
         max: 1,
-        about: 'How fast the player swing started in the first 25ms.',
+        about: 'Reliable. How fast the player swing started in the first 25ms.',
       },
       swing_side: ['forehand', 'backhand'],
       swing_arm_zone: 'arm_zone',
