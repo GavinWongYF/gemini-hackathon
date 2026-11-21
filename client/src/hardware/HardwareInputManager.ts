@@ -27,7 +27,8 @@ const M5_BLE_IMU_CHAR_UUID = '19b10001-e8f2-537e-4f6c-d104768a1214';
 const M5_BLE_CMD_CHAR_UUID = '19b10002-e8f2-537e-4f6c-d104768a1214';
 
 interface IncomingPacket {
-  type?: 'imu' | 'info' | 'control' | 'swing' | 'ping';
+  type?: 'imu' | 'info' | 'control' | 'swing' | 'ping' | 'cmd';
+  cmd?: string;
   ax?: number;
   ay?: number;
   az?: number;
@@ -304,14 +305,10 @@ export class HardwareInputManager {
         : undefined;
     this.webcam.swingDetector.setBallLateral(this.strikeBallOffsetRightM);
 
-    if (!active) {
-      if (this.pendingSwingTimer !== null) {
-        window.clearTimeout(this.pendingSwingTimer);
-        this.pendingSwingTimer = null;
-      }
-      this.pendingImuSwing = null;
-    } else if (!wasOpen) {
+    if (active && !wasOpen) {
       // Fresh strike window just opened -> clear any leftover cooldown so the real hit triggers immediately!
+      // NOTE: When `active` turns false, DO NOT cancel an already-captured `pendingSwingTimer` —
+      // if the M5 peak already fired while the ball was incoming, let its camera-fusion settle timer emit!
       this.classifier.cancelCooldown();
     }
   }
@@ -598,6 +595,15 @@ export class HardwareInputManager {
       return;
     }
 
+    if (pkt.type === 'cmd' && pkt.cmd === 'RECENTER') {
+      this.classifier.rezero();
+      this.webcam.resetSwingDetector();
+      this.state.calibration = this.classifier.getCalibrationPhase();
+      this.state.calibrationProgress = this.classifier.getCalibrationProgress();
+      this.notifyState();
+      return;
+    }
+
     if (
       typeof pkt.ax === 'number' &&
       typeof pkt.ay === 'number' &&
@@ -640,10 +646,10 @@ export class HardwareInputManager {
     this.state.rawImu = sample;
 
     const camActive = this.webcam.getSnapshot().arm.active;
-    // When webcam TennisSwingDetector is active, disable low-threshold soft IMU path so
-    // M5 uses ONLY the rock-solid 260°/s gyro-peak detector (zero idle / backswing triggers!)
-    // while TennisSwingDetector handles soft dropshots & full shot classification visually!
-    const swing = this.classifier.ingest(sample, now, false, !camActive);
+    // Keep soft IMU dropshot path enabled (`true`) even when webcam is active, because M5 BLE
+    // is the sole swing trigger when connected (preventing mutual exclusion on soft 85-220 deg/s dropshots!).
+    // Time-aligned webcam backswing-prep veto below still eliminates backswing false triggers.
+    const swing = this.classifier.ingest(sample, now, false, true);
     const early = this.classifier.consumeEarlySwingGuess();
     this.state.gyro = this.classifier.getLatestReading();
     this.state.calibration = this.classifier.getCalibrationPhase();
@@ -708,7 +714,7 @@ export class HardwareInputManager {
     if (swing) {
       if (camActive && typeof window !== 'undefined') {
         // M5 BLE Peak is the SOLE swing trigger when M5 is connected (eliminates 100% of
-        // standalone webcam backswing/drift false triggers!). Wait 100 ms so the exact
+        // standalone webcam backswing/drift false triggers!). Wait 60 ms so the exact
         // time-aligned MediaPipe frames for [swingStartMs..swingEndMs] have arrived, then
         // run TennisSwingDetector.classifyWindow() directly on THAT exact physical swing!
         if (this.pendingSwingTimer !== null) {
@@ -726,7 +732,7 @@ export class HardwareInputManager {
           const armSummary = this.webcam.getSwingArmSummary(
             pending.swing.swingStartMs,
             pending.swing.swingEndMs,
-            90,
+            60,
           );
           const handedness = this.state.arm.handedness;
           const handSign = handedness === 'right' ? 1 : -1;
@@ -756,16 +762,16 @@ export class HardwareInputManager {
 
           // Exact-window battle-tested Tennis-Game-Spec camera contact classification!
           const camRead = this.webcam.swingDetector.classifyWindow(
-            pending.swing.swingStartMs + 90,
-            pending.swing.swingEndMs + 90,
+            pending.swing.swingStartMs + 60,
+            pending.swing.swingEndMs + 60,
             this.strikeBallOffsetRightM,
           );
           if (camRead) {
             this.emitMergedWebcamImuSwing(camRead, pending.swing, pending.source, nowTs);
           } else {
-            this.finalizeSwing(pending.swing, pending.source, nowTs, 90);
+            this.finalizeSwing(pending.swing, pending.source, nowTs, 60);
           }
-        }, 105);
+        }, 60);
       } else {
         this.finalizeSwing(swing, source, now, 0);
       }
@@ -834,15 +840,33 @@ export class HardwareInputManager {
         ? imuVote.wing
         : camSwing.wing;
 
-    // Gentle low-gyro + soft-speed tap = dropshot; huge gyro smash (> 650 deg/s) is NEVER dropshot!
+    // Fuse 6-DOF IMU spin (`vContact.z` + `racketUpAtPeak`) whenever webcam spin cues were ambiguous,
+    // and enforce realistic gyro-peak bounds for soft dropshots vs full swings!
+    const imuResolved = this.classifier.resolveShot(imuSwing, wing, 0, false, 0, false, 0);
     let shotType = camSwing.shotType;
     let rotation = camSwing.rotation;
-    if (shotType !== 'dropshot' && imuSwing.peakGyroDps < 340 && imuSwing.swingSpeedMps < 1.55 && camSwing.swingSpeed < 1.1) {
+
+    if (camSwing.spinAmbiguous && shotType !== 'dropshot') {
+      shotType = imuResolved.shotType;
+      rotation = imuResolved.rotation;
+    }
+
+    if (
+      shotType !== 'dropshot' &&
+      imuSwing.peakGyroDps < 300 &&
+      imuSwing.swingSpeedMps < 1.55 &&
+      camSwing.swingSpeed < 1.1
+    ) {
       shotType = 'dropshot';
       rotation = -0.32;
-    } else if (shotType === 'dropshot' && imuSwing.peakGyroDps > 620) {
-      shotType = camSwing.pathAngleDeg < -6 ? 'slice' : 'topspin';
-      rotation = shotType === 'slice' ? -0.45 : 0.45;
+    } else if (shotType === 'dropshot' && imuSwing.peakGyroDps > 360) {
+      shotType =
+        camSwing.pathAngleDeg < -6
+          ? 'slice'
+          : imuResolved.shotType !== 'dropshot'
+            ? imuResolved.shotType
+            : 'topspin';
+      rotation = shotType === 'slice' ? -0.48 : 0.48;
     }
 
     this.state.shotType = shotType;

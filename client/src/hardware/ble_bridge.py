@@ -80,8 +80,12 @@ async def run_bridge():
                     await client.start_notify(IMU_CHAR_UUID, on_notify)
                     sender = asyncio.create_task(sender_task())
                     try:
-                        while client.is_connected:
+                        while client.is_connected and not sender.done():
                             await asyncio.sleep(0.5)
+                        if sender.done() and not sender.cancelled():
+                            exc = sender.exception()
+                            if exc is not None:
+                                raise exc
                     finally:
                         sender.cancel()
                         try:

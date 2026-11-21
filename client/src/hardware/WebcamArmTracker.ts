@@ -113,6 +113,8 @@ export class WebcamArmTracker {
   private captureCanvas: HTMLCanvasElement | null = null;
   private rafId: number | null = null;
   private running = false;
+  private startEpoch = 0;
+  private ownedVideoEl = false;
   private lastVideoTime = -1;
   private lastInferMs = 0;
 
@@ -470,9 +472,27 @@ export class WebcamArmTracker {
 
   async start(videoElement?: HTMLVideoElement): Promise<boolean> {
     if (this.running) return true;
+    const epoch = ++this.startEpoch;
     this.snapshot.status = 'loading';
     this.snapshot.error = null;
     this.emitStatus();
+
+    let acquiredStream: MediaStream | null = null;
+    let createdHiddenVideo: HTMLVideoElement | null = null;
+
+    const abortIfStale = (): boolean => {
+      if (epoch === this.startEpoch) return false;
+      if (acquiredStream) {
+        for (const track of acquiredStream.getTracks()) track.stop();
+        acquiredStream = null;
+      }
+      if (createdHiddenVideo) {
+        createdHiddenVideo.srcObject = null;
+        createdHiddenVideo.remove();
+        createdHiddenVideo = null;
+      }
+      return true;
+    };
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -484,14 +504,35 @@ export class WebcamArmTracker {
         },
         audio: false,
       });
-      this.stream = stream;
+      acquiredStream = stream;
+      if (abortIfStale()) return false;
 
-      const video = videoElement ?? document.createElement('video');
+      let video: HTMLVideoElement;
+      if (videoElement) {
+        video = videoElement;
+        this.ownedVideoEl = false;
+      } else {
+        video = document.createElement('video');
+        // Attach hidden 1x1 DOM node so Safari/WebKit never stalls decoded video frames
+        video.style.position = 'fixed';
+        video.style.top = '-9999px';
+        video.style.left = '-9999px';
+        video.style.width = '1px';
+        video.style.height = '1px';
+        video.style.opacity = '0';
+        video.style.pointerEvents = 'none';
+        video.setAttribute('aria-hidden', 'true');
+        if (typeof document !== 'undefined' && document.body) {
+          document.body.appendChild(video);
+        }
+        createdHiddenVideo = video;
+        this.ownedVideoEl = true;
+      }
       video.playsInline = true;
       video.muted = true;
       video.srcObject = stream;
       await video.play();
-      this.videoEl = video;
+      if (abortIfStale()) return false;
 
       if (!this.inferCanvas) {
         this.inferCanvas = document.createElement('canvas');
@@ -502,8 +543,10 @@ export class WebcamArmTracker {
 
       if (!this.landmarker) {
         const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_ROOT);
+        if (abortIfStale()) return false;
+        let createdLandmarker: PoseLandmarker;
         try {
-          this.landmarker = await PoseLandmarker.createFromOptions(vision, {
+          createdLandmarker = await PoseLandmarker.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath: POSE_MODEL_URL,
               delegate: 'GPU',
@@ -515,7 +558,7 @@ export class WebcamArmTracker {
             minTrackingConfidence: 0.3,
           });
         } catch {
-          this.landmarker = await PoseLandmarker.createFromOptions(vision, {
+          createdLandmarker = await PoseLandmarker.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath: POSE_MODEL_URL,
               delegate: 'CPU',
@@ -527,14 +570,40 @@ export class WebcamArmTracker {
             minTrackingConfidence: 0.3,
           });
         }
+        if (abortIfStale()) {
+          createdLandmarker.close();
+          return false;
+        }
+        this.landmarker = createdLandmarker;
       }
 
+      if (abortIfStale()) return false;
+
+      // Replace any prior stream/loop cleanly
+      if (this.rafId !== null) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+      if (this.stream && this.stream !== stream) {
+        for (const track of this.stream.getTracks()) track.stop();
+      }
+      this.stream = stream;
+      this.videoEl = video;
+      this.lastVideoTime = -1;
       this.running = true;
       this.snapshot.status = 'running';
       this.emitStatus();
       this.loop();
       return true;
     } catch (err) {
+      if (abortIfStale()) return false;
+      if (acquiredStream) {
+        for (const track of acquiredStream.getTracks()) track.stop();
+      }
+      if (createdHiddenVideo) {
+        createdHiddenVideo.srcObject = null;
+        createdHiddenVideo.remove();
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.snapshot.status = 'error';
       this.snapshot.error = message;
@@ -545,7 +614,9 @@ export class WebcamArmTracker {
   }
 
   stop() {
+    this.startEpoch += 1;
     this.running = false;
+    this.lastVideoTime = -1;
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -556,6 +627,11 @@ export class WebcamArmTracker {
     }
     if (this.videoEl) {
       this.videoEl.srcObject = null;
+      if (this.ownedVideoEl) {
+        this.videoEl.remove();
+        this.videoEl = null;
+        this.ownedVideoEl = false;
+      }
     }
     this.history = [];
     this.lastKinematics = null;
