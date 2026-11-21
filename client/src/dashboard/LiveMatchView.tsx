@@ -15,6 +15,7 @@ import { TennisMatchEngine, createInitialMatchRenderState } from '../engine/Tenn
 import { captureCourtJpeg } from './CourtFrameCapture';
 import { PauseDashboard, type PointWinnerRecord } from './PauseDashboard';
 import { SceneSlot } from './SceneSlot';
+import { ControlsMenu } from './ControlsMenu';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -462,6 +463,9 @@ export const LiveMatchView: React.FC = () => {
     hardwareInput.zeroRacket();
   }, []);
 
+  const handleConnectSerial = useCallback(() => {
+    void hardwareInput.connectSerial();
+  }, []);
   const handleConnectBle = useCallback(() => {
     void hardwareInput.connectBle();
   }, []);
@@ -581,118 +585,18 @@ export const LiveMatchView: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          <button
-            type="button"
-            className="lab-btn"
-            onClick={handleConnectBle}
-            title={
-              imuConnected
-                ? 'M5 IMU live — click to switch Web Bluetooth device'
-                : 'Click to pair M5-TENNIS-IMU over Web Bluetooth (or run ble_bridge.py)'
-            }
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              height: 24,
-              padding: '0 8px',
-              borderRadius: 5,
-              background: '#fafaf8',
-              border: '1px solid #e5e4df',
-              fontFamily: MONO,
-              fontSize: 10.5,
-              fontWeight: 500,
-              color: '#141413',
-              letterSpacing: '0.02em',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: imuConnected ? (imuCalibrated ? '#059669' : '#d97706') : '#c8c7c0',
-                flexShrink: 0,
-              }}
-            />
-            <span>IMU</span>
-            <span style={{ color: '#8c8b85' }}>{imuConnected ? `${imuHz}HZ` : 'PAIR'}</span>
-          </button>
-          {imuConnected && (
-            <button
-              type="button"
-              className="lab-btn"
-              onClick={handleZeroRacket}
-              title="Zero / Re-Zero M5 racket in any comfortable grip (also BtnA on M5)"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                height: 24,
-                padding: '0 8px',
-                borderRadius: 5,
-                background: imuCalibrated ? '#fafaf8' : '#fef3c7',
-                color: imuCalibrated ? '#575652' : '#92400e',
-                border: `1px solid ${imuCalibrated ? '#e5e4df' : '#f59e0b'}`,
-                fontFamily: MONO,
-                fontSize: 10.5,
-                fontWeight: 600,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {imuCalibrated ? 'RE-ZERO' : 'ZERO M5'}
-            </button>
-          )}
-          <button
-            type="button"
-            className="lab-btn"
-            onClick={handleToggleWebcam}
-            title="Toggle laptop webcam for pose tracking & Gemini player_cam frames"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              height: 24,
-              padding: '0 8px',
-              borderRadius: 5,
-              background: '#fafaf8',
-              border: '1px solid #e5e4df',
-              fontFamily: MONO,
-              fontSize: 10.5,
-              fontWeight: 500,
-              color: '#141413',
-              letterSpacing: '0.02em',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background:
-                  webcamStatus === 'running'
-                    ? '#059669'
-                    : webcamStatus === 'loading'
-                      ? '#d97706'
-                      : '#c8c7c0',
-                flexShrink: 0,
-              }}
-            />
-            <span>CAM</span>
-            <span style={{ color: '#8c8b85' }}>
-              {webcamActive
-                ? armZone.toUpperCase()
-                : webcamStatus === 'loading'
-                  ? 'INIT'
-                  : webcamStatus === 'running'
-                    ? 'ON'
-                    : 'OFF'}
-            </span>
-          </button>
+          <ControlsMenu
+            webcamStatus={webcamStatus}
+            webcamActive={webcamActive}
+            armZone={armZone}
+            imuConnected={imuConnected}
+            imuCalibrated={imuCalibrated}
+            imuHz={imuHz}
+            onToggleWebcam={handleToggleWebcam}
+            onConnectBle={handleConnectBle}
+            onConnectSerial={handleConnectSerial}
+            onZero={handleZeroRacket}
+          />
           {isOfflineNotAdapting ? (
             <span
               title="Agent backend at ws://localhost:8000/ws is not connected; opponent is running fixed baseline behaviour without adaptation."

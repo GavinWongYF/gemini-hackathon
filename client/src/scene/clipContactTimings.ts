@@ -18,12 +18,12 @@ export interface ClipContactTiming {
  * for the external tennis animation clips in `/models/animations/`.
  */
 export const CLIP_CONTACT_TABLE: Record<string, ClipContactTiming> = {
-  forehand: { contact: 9 / 30, speed: 1.5 },
-  backhand: { contact: 10 / 30, speed: 1.5 },
-  slice: { contact: 11 / 30, speed: 1.5 },
-  dropshot: { contact: 11 / 30, speed: 1.5 },
-  volley_forehand: { contact: 9 / 30, speed: 1.5 },
-  volley_backhand: { contact: 9 / 30, speed: 1.5 },
+  forehand: { contact: 9 / 30, speed: 1.15 },
+  backhand: { contact: 10 / 30, speed: 1.15 },
+  slice: { contact: 11 / 30, speed: 1.15 },
+  dropshot: { contact: 11 / 30, speed: 1.15 },
+  volley_forehand: { contact: 9 / 30, speed: 1.15 },
+  volley_backhand: { contact: 9 / 30, speed: 1.15 },
   serve: { contact: 2.054, speed: 1.2 },
   split_step: { contact: 0, speed: 1.8 },
 };
