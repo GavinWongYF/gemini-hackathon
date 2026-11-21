@@ -154,13 +154,26 @@ export class TennisMatchEngine {
   private lastHumanShotQuality = 0.7;
   private lastOpponentShot: LastOpponentShotContext | null = null;
 
-  // Player live hardware mirror
+  // Player live hardware mirror & latest swing_start features (shared across all picks)
   private playerArmZone: ArmZone = 'center';
   private playerArmX = 0;
   private playerWing: StrokeWing = 'forehand';
   private playerLastSide: StrokeWing = 'forehand';
   private playerLastShotType: HumanShotType = 'topspin';
   private playerHomeZ: number = COURT.PLAYER_START_Z;
+  private playerLastSwingStart: {
+    earlyGuess: HumanShotType;
+    backswing: number;
+    initialSpeed: number;
+    side: StrokeWing;
+    armZone: ArmZone;
+  } = {
+    earlyGuess: 'topspin',
+    backswing: 0.5,
+    initialSpeed: 0.5,
+    side: 'forehand',
+    armZone: 'center',
+  };
 
   // Recorded shots & arcs for dashboard / replay
   private activeShotArc: TrajectoryPoint[] = [];
@@ -270,7 +283,7 @@ export class TennisMatchEngine {
     this.playerArmZone = armZone;
     this.playerArmX = clamp(armX, -1, 1);
     this.playerWing = wing;
-    this.playerHomeZ = clamp(z, 4.5, COURT.PLAYER_START_Z);
+    this.playerHomeZ = clamp(z, 4.5, 12.2);
   }
 
   /**
@@ -303,29 +316,31 @@ export class TennisMatchEngine {
     // Neutral rally balls are very returnable so the player starts off winning (~65-70% vs baseline);
     // targeted counter-shots (dropshot vs deep player, wide slice to weak backhand) create real stretch!
     const oppShot = this.lastOpponentShot?.shotType ?? 'topspin';
-    const maxLateral = oppShot === 'slice' ? 2.95 : oppShot === 'flat' ? 3.2 : 3.85;
-    const maxDepth = oppShot === 'dropshot' ? 1.85 : 4.2;
+    const maxLateral = oppShot === 'slice' ? 3.2 : oppShot === 'flat' ? 3.45 : 3.95;
+    const maxDepth = oppShot === 'dropshot' ? 3.25 : 4.35;
 
-    if (lateralGap > maxLateral + 1.35 || depthGap > maxDepth + 1.3) {
+    if (lateralGap > maxLateral + 1.55 || depthGap > maxDepth + 1.5) {
       return { reachable: false, quality: 0, lateralGap, depthGap, forcedErrorProb: 1 };
     }
 
-    const latStress = clamp(Math.max(0, lateralGap - 0.9) / maxLateral, 0, 1);
-    const depthStress = clamp(Math.max(0, depthGap - 1.0) / maxDepth, 0, 1);
-    const heightStress = oppShot === 'slice' && b.y < 0.35 ? 0.14 : oppShot === 'lob' && b.y > 2.2 ? 0.18 : 0;
-    const wingPenalty = wing === 'backhand' ? 0.04 : 0;
+    const latStress = clamp(Math.max(0, lateralGap - 0.95) / maxLateral, 0, 1);
+    const depthStress = clamp(Math.max(0, depthGap - 1.15) / maxDepth, 0, 1);
+    const heightStress = oppShot === 'slice' && b.y < 0.32 ? 0.1 : oppShot === 'lob' && b.y > 2.3 ? 0.14 : 0;
+    const wingPenalty = wing === 'backhand' ? 0.03 : 0;
+    // Alert players already inside the court (< 8.2m) handle dropshots cleanly on the rise!
+    const shortCourtBonus = oppShot === 'dropshot' && p.z < 8.2 ? 0.16 : 0;
 
     const quality = clamp(
-      1 - 0.28 * latStress - 0.3 * depthStress - heightStress - wingPenalty - weaknessPenalty,
-      0.12,
+      1 + shortCourtBonus - 0.25 * latStress - 0.28 * depthStress - heightStress - wingPenalty - weaknessPenalty,
+      0.16,
       1.0,
     );
 
-    // Comfortable shots against baseline almost never error; true counter-shots force errors!
+    // Comfortable shots stay in play reliably (~2.5-3.5 player shots per point); counters create real pressure without 100% free points!
     const forcedErrorProb =
-      weaknessPenalty < 0.18 && quality > 0.68
-        ? 0.02
-        : clamp((1 - quality) * 0.58 + weaknessPenalty * 0.65, 0.02, 0.88);
+      weaknessPenalty < 0.14 && quality > 0.68
+        ? 0.04
+        : clamp((1 - quality) * 0.58 + weaknessPenalty * 0.68, 0.04, 0.78);
     return { reachable: true, quality, lateralGap, depthGap, forcedErrorProb };
   }
 
@@ -360,14 +375,15 @@ export class TennisMatchEngine {
       },
     });
 
-    const facts: TennisFacts = {
-      ...this.buildFacts(),
-      swing_early_guess: swingStart.earlyGuess,
-      swing_backswing: round2(swingStart.backswing),
-      swing_initial_speed: round2(swingStart.initialSpeed),
-      swing_side: swingStart.wing,
-      swing_arm_zone: swingStart.armZone,
+    this.playerLastSwingStart = {
+      earlyGuess: swingStart.earlyGuess,
+      backswing: round2(swingStart.backswing),
+      initialSpeed: round2(swingStart.initialSpeed),
+      side: swingStart.wing,
+      armZone: swingStart.armZone,
     };
+
+    const facts: TennisFacts = this.buildFacts();
 
     const ant = this.brain.decideAnticipation(facts);
     this.opponentAnticipatedMove = ant.move;
@@ -491,22 +507,27 @@ export class TennisMatchEngine {
 
     if (opts?.targetZoneOverride) {
       const colX = opts.targetZoneOverride.startsWith('left_')
-        ? -3.4
+        ? -3.55
         : opts.targetZoneOverride.startsWith('right_')
-          ? 3.4
+          ? 3.55
           : 0;
-      const depthZ = opts.targetZoneOverride.endsWith('_short') ? -4.5 : -9.0;
-      targetX = colX + (this.rng() * 2 - 1) * 0.55;
-      targetZ = depthZ + (this.rng() * 2 - 1) * 0.65;
+      const depthZ =
+        swing.shotType === 'dropshot' || opts.targetZoneOverride.endsWith('_short')
+          ? -4.6
+          : swing.shotType === 'slice'
+            ? -7.5
+            : -8.5;
+      targetX = colX + (this.rng() * 2 - 1) * 0.5;
+      targetZ = depthZ + (this.rng() * 2 - 1) * 0.45;
     } else {
-      targetX = clamp(swing.angle * 4.4 + (this.rng() * 2 - 1) * 0.4, -4.9, 4.9);
+      targetX = clamp(swing.angle * 4.4 + (this.rng() * 2 - 1) * 0.35, -4.85, 4.85);
       const baseDepth =
         swing.shotType === 'dropshot'
-          ? -(3.8 + swing.power * 2.2)
+          ? -(3.8 + swing.power * 1.4)
           : swing.shotType === 'slice'
-            ? -(7.0 + swing.power * 2.8)
-            : -(7.4 + swing.power * 3.1);
-      targetZ = clamp(baseDepth, -10.8, -3.2);
+            ? -(7.15 + swing.power * 1.05)
+            : -(7.4 + swing.power * 1.9);
+      targetZ = clamp(baseDepth, -9.6, -3.5);
     }
 
     let forcedNet = false;
@@ -524,16 +545,18 @@ export class TennisMatchEngine {
 
     const rpm =
       swing.shotType === 'topspin'
-        ? 1400 + Math.max(0, swing.rotation) * 1600
+        ? 2100 + Math.max(0, swing.rotation) * 1200
         : swing.shotType === 'slice'
-          ? -(1300 + Math.abs(swing.rotation) * 1500)
-          : -1100;
+          ? -(1900 + Math.abs(swing.rotation) * 1200)
+          : -1400;
 
-    const speedScale = clamp((0.72 + swing.power * 0.42) * Math.sqrt(assessment.quality), 0.55, 1.15);
+    const speedScale = clamp((0.88 + swing.power * 0.26) * (0.8 + 0.2 * assessment.quality), 0.74, 1.15);
+    const flightShotType = isAirVolley ? 'volley' : swing.shotType;
 
-    const sol = solveShotLaunch(contactPos, { x: targetX, z: targetZ }, swing.shotType, {
+    const sol = solveShotLaunch(contactPos, { x: targetX, z: targetZ }, flightShotType, {
+      actor: 'human',
       speedScale,
-      rpmOverride: rpm,
+      rpmOverride: isAirVolley ? -350 : rpm,
       allowNetError: forcedNet,
     });
 
@@ -552,10 +575,16 @@ export class TennisMatchEngine {
     this.opponentHitScheduled = false;
     this.pendingOpponentDecision = null;
     this.lastHumanShotQuality = assessment.quality;
-    // If the opponent already committed to an early `anticipate` read, cut post-contact reaction delay!
-    const baseDelay = clamp(0.18 + assessment.quality * 0.24, 0.15, 0.45);
+    // Opponent split-step reaction delay scales with `opponent_speed` fairness dial (0.65..1.25)
+    // Tuned for fast 23-26 m/s player shots (~0.82-0.95s court crossing):
+    // - At 0.65: sluggish 0.24s reaction + slower sprint -> corner drives beat it cleanly
+    // - At 0.85: balanced 0.12s reaction -> ~55-62% player win against unadapted baseline
+    // - At 1.25: crisp 0.03s tour reaction -> tracks down nearly everything!
+    const speedMul = this.brain.getSettings().opponent_speed;
+    const speedNorm = (speedMul - 0.85) / 0.4; // -0.5 at 0.65, 0 at 0.85, +1.0 at 1.25
+    const baseDelay = clamp(0.11 - speedNorm * 0.16 + assessment.quality * 0.04, 0.02, 0.3);
     this.opponentReactionDelaySec =
-      this.opponentAnticipatedMove !== 'stay' ? Math.max(0.04, baseDelay * 0.35) : baseDelay;
+      this.opponentAnticipatedMove !== 'stay' ? Math.max(0.015, baseDelay * 0.3) : baseDelay;
     this.opponentAnticipatedMove = 'stay';
     this.renderState.ball.landingMarker = null;
 
@@ -768,9 +797,9 @@ export class TennisMatchEngine {
     const opp = this.renderState.opponent;
     const facts = this.buildFacts();
 
-    // Opponent serve uses the SAME single `pick()` entry point (including short/underarm dropshot serves!)
+    // Serves are strictly topspin, flat, or slice (never dropshot or lob)
     const decision = this.brain.decideShot(facts, {
-      shot_type: ['topspin', 'flat', 'slice', 'dropshot'],
+      shot_type: ['topspin', 'flat', 'slice'],
     });
 
     this.executeOpponentShot(decision, true);
@@ -789,11 +818,17 @@ export class TennisMatchEngine {
 
     if (this.opponentHitScheduled) return;
 
-    // Realistic opponent reach & error when human hits a clean shot away from opponent's chosen `position`
+    // Opponent lunge reach & footwork readiness scale cleanly with `opponent_speed` (0.65..1.25)
+    const speedMul = this.brain.getSettings().opponent_speed;
+    const speedNorm = (speedMul - 0.85) / 0.4;
     const dist = Math.hypot(b.x - opp.x, b.z - opp.z);
-    const reachRadius = clamp(1.85 - Math.max(0, this.lastHumanShotQuality - 0.55) * 0.9, 1.25, 1.9);
-    const readyByBounce = b.bounceCount === 1 && b.vy <= 2.8 && b.z < -2.0;
-    const readyByVolley = b.bounceCount === 0 && opp.z > -5.5 && b.z < -2.0 && dist < 1.8;
+    const reachRadius = clamp(
+      2.15 + speedNorm * 0.55 - Math.max(0, this.lastHumanShotQuality - 0.72) * 0.35,
+      1.45,
+      2.75,
+    );
+    const readyByBounce = b.bounceCount === 1 && b.vy <= 3.6 && b.z < -2.0;
+    const readyByVolley = b.bounceCount === 0 && opp.z > -5.8 && b.z < -2.0 && dist < 2.0;
 
     if ((readyByBounce || readyByVolley) && dist <= reachRadius) {
       this.opponentHitScheduled = true;
@@ -815,23 +850,34 @@ export class TennisMatchEngine {
     this.pendingOpponentDecision = decision;
 
     const contactPos = isServe
-      ? { x: opp.x + 0.25, y: 2.15, z: opp.z + 0.45 }
+      ? { x: opp.x + 0.25, y: 2.45, z: opp.z + 0.35 }
       : { x: b.x, y: clamp(b.y, 0.65, 1.95), z: clamp(b.z, -11.4, -2.0) };
 
-    // Realistic stretch error when opponent lunges late for a well-struck player shot
+    // Realistic footwork/stretch error curve controlled by `opponent_speed` (keeps rallies ~2.5-3.5 shots!)
+    const speedMul = this.brain.getSettings().opponent_speed;
+    const speedNorm = (speedMul - 0.85) / 0.4; // -0.5 at 0.65, 0 at 0.85, +1.0 at 1.25
     const stretchDist = isServe ? 0 : Math.hypot(b.x - opp.x, b.z - opp.z);
-    const oppErrProb = isServe
-      ? 0
-      : clamp(0.14 + Math.max(0, stretchDist - 0.3) * 0.42 + Math.max(0, this.lastHumanShotQuality - 0.6) * 0.85, 0.06, 0.78);
+    const baseErr = clamp(0.11 - speedNorm * 0.09, 0.015, 0.22);
+    const stretchErr = Math.max(0, stretchDist - 0.7) * clamp(0.2 - speedNorm * 0.1, 0.05, 0.28);
+    const paceErr =
+      Math.max(0, this.lastHumanShotQuality - 0.78) * clamp(0.24 - speedNorm * 0.14, 0.05, 0.34);
+    const oppErrProb = isServe ? 0 : clamp(baseErr + stretchErr + paceErr, 0.015, 0.55);
     const oppForcedErr = !isServe && this.rng() < oppErrProb;
 
-    const target = { ...decision.targetCoords };
+    const target = isServe
+      ? {
+          x: clamp(decision.targetCoords.x * 0.72, -3.1, 3.1),
+          z: 5.2 + this.rng() * 0.85, // Service box landing -> flat downward trajectory + comfortable post-bounce glide
+        }
+      : { ...decision.targetCoords };
     if (oppForcedErr) {
       target.x = (target.x >= 0 ? 1 : -1) * (COURT.PAINTED_HALF_W + 0.9);
     }
 
     const sol = solveShotLaunch(contactPos, target, decision.picked.shot_type, {
-      speedScale: isServe ? 0.92 : decision.shotSpeedMul,
+      actor: 'ai',
+      isServe,
+      speedScale: decision.shotSpeedMul,
     });
 
     this.ballEngine.launch(
@@ -967,24 +1013,32 @@ export class TennisMatchEngine {
 
   private updatePlayerMovement(dt: number) {
     const p = this.renderState.player;
-    // Stationary player with webcam arm reach: gently shift lateral X to mirror armZone/armX
-    // plus subtle auto-assist toward incoming balls (never teleporting — keeps wide shots challenging!)
     let targetX = this.playerArmX * 3.1;
     let targetZ = this.playerHomeZ;
+    let maxSpeed = 3.0; // smooth recovery speed back toward preferred homeZ after hitting
 
     if (this.renderState.phase === 'rally' && this.hitter === 'ai' && this.ballEngine.state.active) {
       const land = this.renderState.ball.landingMarker;
+      // Alert all-court players sprint in briskly (6.6 m/s); deep-planted baseline grinders react slower to short dropshots (3.6 m/s)!
+      const isShortBall = Boolean(land && land.z < 6.2);
+      maxSpeed =
+        isShortBall && this.playerHomeZ >= 11.3
+          ? 3.65
+          : this.playerHomeZ >= 11.3
+            ? 5.2
+            : 6.6;
       if (land) {
-        // Blend player's actual arm lean (65%) with subtle footwork assist (35%)
-        targetX = clamp(this.playerArmX * 2.8 + land.x * 0.35, -4.7, 4.7);
-        // Step forward slightly only if ball is short, still leaving dropshot pressure
-        if (land.z < 6.5) {
-          targetZ = clamp(this.playerHomeZ - 1.8, 7.6, COURT.PLAYER_START_Z);
+        targetX = clamp(this.playerArmX * 2.5 + land.x * 0.45, -4.8, 4.8);
+        if (land.z < 7.5) {
+          targetZ = clamp(land.z + 1.15, 5.0, this.playerHomeZ);
+        } else if (land.z > 9.2 && p.z < 9.0) {
+          targetZ = clamp(land.z + 0.9, 8.8, this.playerHomeZ);
+        } else {
+          targetZ = p.z;
         }
       }
     }
 
-    const maxSpeed = 6.2;
     const dx = targetX - p.x;
     const dz = targetZ - p.z;
     const dist = Math.hypot(dx, dz);
@@ -1009,7 +1063,7 @@ export class TennisMatchEngine {
   private updateOpponentMovement(dt: number) {
     const opp = this.renderState.opponent;
     const speedMul = this.brain.getSettings().opponent_speed;
-    const maxSpeed = 4.6 * speedMul;
+    const maxSpeed = 6.1 * speedMul;
 
     const dx = this.opponentTargetPos.x - opp.x;
     const dz = this.opponentTargetPos.z - opp.z;
@@ -1047,6 +1101,11 @@ export class TennisMatchEngine {
       player_last_side: this.playerLastSide,
       player_last_shot_type: this.playerLastShotType,
       rally_length: this.rallyShotCount,
+      swing_early_guess: this.playerLastSwingStart.earlyGuess,
+      swing_backswing: this.playerLastSwingStart.backswing,
+      swing_initial_speed: this.playerLastSwingStart.initialSpeed,
+      swing_side: this.playerLastSwingStart.side,
+      swing_arm_zone: this.playerLastSwingStart.armZone,
     };
   }
 

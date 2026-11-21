@@ -257,10 +257,10 @@ export const DEFAULT_TENNIS_BEHAVIOUR: BehaviourJson = {
     opponent: {
       decisions: {
         shot_type: {
-          topspin: { base: 0.36 },
+          topspin: { base: 0.42 },
           flat: { base: 0.24 },
           slice: { base: 0.2 },
-          dropshot: { base: 0.12 },
+          dropshot: { base: 0.06 },
           lob: { base: 0.08 },
         },
         aim: {
@@ -315,7 +315,7 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
     match_id: opts.matchId,
     game: 'tennis',
     about:
-      'One human player plays single points against one AI opponent. The player stands near the bottom baseline swinging a physical M5 IMU racket controller while a webcam tracks their dominant arm side (left/center/right, forehand/backhand). The opponent is at the top half of the screen and picks shot_type, aim, and recovery position on every hit.',
+      'One human player plays single points against one AI opponent. The player stands near the bottom baseline swinging a physical M5 IMU racket controller while a webcam tracks their dominant arm side (left/center/right, forehand/backhand), and steps inside the court for short balls before recovering toward the baseline. The opponent is at the top half of the screen and picks shot_type, aim, and recovery position on every hit (serves are topspin, flat, or slice — never dropshot or lob). Message timestamps t measure active play time in seconds and pause while waiting for ready, during between-point breaks, and after match_over.',
     mode,
     goal:
       opts.goal ??
@@ -471,12 +471,14 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
       swing_backswing: {
         min: 0,
         max: 1,
-        about: 'Reliable. How big the player backswing was at swing_start.',
+        about:
+          'Reliable. How big the player backswing was on the latest swing_start (passed to anticipate and to the opponent return picks on that shot).',
       },
       swing_initial_speed: {
         min: 0,
         max: 1,
-        about: 'Reliable. How fast the player swing started in the first 25ms.',
+        about:
+          'Reliable. How fast the player swing started in the first 25ms on the latest swing_start (passed to anticipate and to the opponent return picks on that shot).',
       },
       swing_side: ['forehand', 'backhand'],
       swing_arm_zone: 'arm_zone',
@@ -489,7 +491,7 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
     settings: {
       opponent_speed: {
         about:
-          'Multiplier on how quickly the AI opponent moves across the court (court coverage only; does not change ball speed).',
+          'Fairness dial controlling how quickly the AI opponent split-steps, sprints across the court, and sets its feet before hitting (0.65 = sluggish/error-prone under pace, 0.85 = balanced default, 1.25 = fast/rock-solid wall; never changes ball speed).',
         min: TENNIS_SETTINGS_BOUNDS.opponent_speed.min,
         max: TENNIS_SETTINGS_BOUNDS.opponent_speed.max,
         now: TENNIS_SETTINGS_BOUNDS.opponent_speed.default,
@@ -670,7 +672,8 @@ export function coordsToCourtZone(x: number, z: number): CourtZone {
 
 export function armZoneToPlayerCourtZone(armZone: ArmZone, playerZ: number = COURT.PLAYER_START_Z): CourtZone {
   const col = armZone === 'left' ? 'left' : armZone === 'right' ? 'right' : 'middle';
-  const depth = Math.abs(playerZ) < DEPTH_SPLIT_Z ? 'short' : 'deep';
+  // Players step inside z < 8.4m when attacking short balls / dropshots, and stand >= 8.4m at the baseline
+  const depth = Math.abs(playerZ) < 8.4 ? 'short' : 'deep';
   return `${col}_${depth}` as CourtZone;
 }
 

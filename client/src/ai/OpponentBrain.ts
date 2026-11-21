@@ -61,11 +61,11 @@ export interface LegalDecisionFilter {
 }
 
 const SHOT_SPEED_MULTIPLIERS: Record<OpponentShotChoice, number> = {
-  flat: 1.18,
+  flat: 1.0,
   topspin: 1.0,
-  slice: 0.86,
-  dropshot: 0.56,
-  lob: 0.72,
+  slice: 1.0,
+  dropshot: 1.0,
+  lob: 1.0,
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -269,14 +269,27 @@ export class OpponentBrain {
   }
 
   private computeTargetCoords(shotType: OpponentShotChoice, aim: OpponentAimChoice): { x: number; z: number } {
-    // Dropshots always land short on the human half even if aim was deep
+    // Dropshots always land short on the human half; lobs always land deep
     let effectiveZone: CourtZone = aim;
     if (shotType === 'dropshot' && aim.endsWith('_deep')) {
       effectiveZone = aim.replace('_deep', '_short') as CourtZone;
     } else if (shotType === 'lob' && aim.endsWith('_short')) {
       effectiveZone = aim.replace('_short', '_deep') as CourtZone;
     }
-    return courtZoneToTarget(effectiveZone, 'human', 0.55, this.rng);
+    const base = courtZoneToTarget(effectiveZone, 'human', 0.4, this.rng);
+    // Calibrated solo readable landing depths (keeps `lands` zone contract: <7.0 = short, >=7.0 = deep!)
+    if (shotType === 'dropshot') {
+      base.z = 4.85 + this.rng() * 0.65; // 4.85..5.50m (short, returnable on sprint!)
+    } else if (shotType === 'slice') {
+      base.z = effectiveZone.endsWith('_short') ? 5.6 + this.rng() * 0.7 : 7.15 + this.rng() * 0.55;
+    } else if (shotType === 'lob') {
+      base.z = 8.6 + this.rng() * 1.1;
+    } else if (effectiveZone.endsWith('_deep')) {
+      base.z = 7.25 + this.rng() * 0.85; // 7.25..8.10m: low arc + generous post-bounce glide to baseline!
+    } else {
+      base.z = 5.6 + this.rng() * 0.8;
+    }
+    return base;
   }
 
   private deriveVisualCue(

@@ -59,14 +59,14 @@ export const BUILTIN_SCRIPTED_PLAYERS: Record<string, ScriptedPlayerProfile> = {
       right_short: 0.04,
     },
     // Strong on forehand/right, clearly vulnerable to deep backhand (left_deep) and low slices!
-    shotVulnerability: { slice: 0.34, flat: 0.14, topspin: 0.04, dropshot: 0.18, lob: 0.02 },
-    aimVulnerability: { left_deep: 0.44, left_short: 0.28, middle_deep: 0.04, right_deep: 0.0, right_short: 0.08 },
+    shotVulnerability: { slice: 0.42, flat: 0.16, topspin: 0.04, dropshot: 0.2, lob: 0.04 },
+    aimVulnerability: { left_deep: 0.5, left_short: 0.3, middle_deep: 0.04, right_deep: 0.0, right_short: 0.08 },
     avgPower: 0.8,
   },
   baseline_grinder: {
     name: 'baseline_grinder',
     forehandPref: 0.58,
-    homeZ: 11.4,
+    homeZ: 11.55,
     shotTypeWeights: { topspin: 0.8, slice: 0.15, dropshot: 0.05 },
     targetZoneWeights: {
       left_deep: 0.25,
@@ -76,15 +76,15 @@ export const BUILTIN_SCRIPTED_PLAYERS: Record<string, ScriptedPlayerProfile> = {
       middle_short: 0.01,
       right_short: 0.02,
     },
-    // Rock solid on deep topspin/flat rallies, clearly vulnerable to short dropshots!
-    shotVulnerability: { dropshot: 0.64, slice: 0.16, topspin: 0.02, flat: 0.06, lob: 0.0 },
-    aimVulnerability: { left_short: 0.56, right_short: 0.56, left_deep: 0.05, middle_deep: 0.02, right_deep: 0.05 },
-    avgPower: 0.64,
+    // Rock solid on deep topspin/flat rallies, vulnerable (but never 100% helpless!) to short dropshots!
+    shotVulnerability: { dropshot: 0.52, slice: 0.14, topspin: 0.02, flat: 0.05, lob: 0.0 },
+    aimVulnerability: { left_short: 0.42, right_short: 0.42, left_deep: 0.05, middle_deep: 0.02, right_deep: 0.05 },
+    avgPower: 0.68,
   },
   even: {
     name: 'even',
     forehandPref: 0.52,
-    homeZ: 10.6,
+    homeZ: 10.1,
     shotTypeWeights: { topspin: 0.45, slice: 0.3, dropshot: 0.25 },
     targetZoneWeights: {
       left_deep: 0.22,
@@ -94,9 +94,9 @@ export const BUILTIN_SCRIPTED_PLAYERS: Record<string, ScriptedPlayerProfile> = {
       middle_short: 0.08,
       right_short: 0.12,
     },
-    shotVulnerability: { topspin: 0.1, flat: 0.14, slice: 0.14, dropshot: 0.14, lob: 0.1 },
-    aimVulnerability: { left_deep: 0.12, middle_deep: 0.08, right_deep: 0.12, left_short: 0.14, right_short: 0.14 },
-    avgPower: 0.7,
+    shotVulnerability: { topspin: 0.08, flat: 0.12, slice: 0.1, dropshot: 0.06, lob: 0.1 },
+    aimVulnerability: { left_deep: 0.1, middle_deep: 0.06, right_deep: 0.1, left_short: 0.08, right_short: 0.08 },
+    avgPower: 0.72,
   },
 };
 
@@ -229,7 +229,9 @@ export interface PracticeBatchResult {
  * Executes a full `practice_run` batch headlessly using the real physics & `OpponentBrain` (`pick()`).
  */
 export function runPracticeBatch(
-  req: Pick<AgentPracticeRunMessage, 'run_id' | 'player' | 'rounds' | 'behaviour'>,
+  req: Pick<AgentPracticeRunMessage, 'run_id' | 'player' | 'rounds' | 'behaviour'> & {
+    opponentSpeed?: number;
+  },
   seed = 1337,
 ): PracticeBatchResult {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -237,6 +239,10 @@ export function runPracticeBatch(
   const profile = personaToScriptedProfile(req.player);
 
   const brain = new OpponentBrain(req.behaviour, rng);
+  if (typeof req.opponentSpeed === 'number') {
+    brain.queueStrategyUpdate({ behaviour: req.behaviour, settings: { opponent_speed: req.opponentSpeed } });
+    brain.applyPendingBetweenRounds();
+  }
   let totalExchanges = 0;
   let totalPointSeconds = 0;
   let completedRounds = 0;
@@ -322,10 +328,12 @@ export function runPracticeBatch(
         });
       }
 
-      // Wait until the ball is in the natural hitting zone (after bounce peak or near player depth)
+      // Wait until the sprinting player has closed onto the ball (or last-moment lunge before 2nd bounce)
+      const pZ = engine.getRenderState().player.z;
       const inStrikeZone =
-        (b.bounceCount === 1 && (b.z >= engine.getRenderState().player.z - 2.2 || b.vy < 0.8)) ||
-        (b.bounceCount === 0 && b.z >= engine.getRenderState().player.z - 1.2);
+        (b.bounceCount === 1 &&
+          (Math.abs(b.z - pZ) <= 1.35 || b.z >= pZ - 1.1 || (b.vy < -1.8 && b.y < 0.38))) ||
+        (b.bounceCount === 0 && b.z >= pZ - 1.1);
       if (inStrikeZone && swingAttemptedForBounceKey !== bounceKey) {
         swingAttemptedForBounceKey = bounceKey;
 
@@ -342,14 +350,18 @@ export function runPracticeBatch(
         // Compute realistic vulnerability from opponent's chosen shot & aim!
         const shotVuln = oppCtx ? (profile.shotVulnerability[oppCtx.shotType] ?? 0.06) : 0.04;
         const aimVuln = oppCtx ? (profile.aimVulnerability[oppCtx.aim] ?? 0.06) : 0.04;
-        const weaknessPenalty = Math.min(0.68, shotVuln * 0.65 + aimVuln * 0.7);
+        // If player is already stepped inside the court (< 8.2m), dropshots lose their surprise advantage!
+        const rawWeakness = Math.min(0.62, shotVuln * 0.62 + aimVuln * 0.62);
+        const weaknessPenalty =
+          oppCtx?.shotType === 'dropshot' && pZ < 8.2 ? rawWeakness * 0.25 : rawWeakness;
 
-        // If ball hits a strong vulnerability, the scripted player may fail to get a clean swing off
+        // If ball hits a strong vulnerability AND player was caught deep, occasional late miss
         const missRoll = rng();
-        const forceMiss = weaknessPenalty > 0.28 && missRoll < (weaknessPenalty - 0.12) * 0.72;
+        const forceMiss = weaknessPenalty > 0.34 && missRoll < (weaknessPenalty - 0.2) * 0.55;
 
         const chosenShot = sampleWeighted(profile.shotTypeWeights, rng);
         const chosenTarget = sampleWeighted(profile.targetZoneWeights, rng);
+        const simConf = Math.max(0.58, Math.min(0.96, 0.88 - weaknessPenalty * 0.25 + (rng() * 2 - 1) * 0.06));
 
         engine.setPlayerStance(armZone, armX, wing, profile.homeZ);
         engine.handlePlayerSwing(
@@ -361,6 +373,7 @@ export function runPracticeBatch(
             power: Math.max(0.3, Math.min(1, profile.avgPower + (rng() * 2 - 1) * 0.14)),
             rotation: chosenShot === 'slice' ? -0.65 : chosenShot === 'topspin' ? 0.65 : -0.25,
             angle: chosenTarget.startsWith('left_') ? -0.65 : chosenTarget.startsWith('right_') ? 0.65 : 0,
+            confidence: simConf,
           },
           {
             targetZoneOverride: chosenTarget,
