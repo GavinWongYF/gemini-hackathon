@@ -279,7 +279,7 @@ export class OpponentBrain {
     const base = courtZoneToTarget(effectiveZone, 'human', 0.4, this.rng);
     // Calibrated solo readable landing depths (keeps `lands` zone contract: <7.0 = short, >=7.0 = deep!)
     if (shotType === 'dropshot') {
-      base.z = 4.85 + this.rng() * 0.65; // 4.85..5.50m (short, returnable on sprint!)
+      base.z = 4.35 + this.rng() * 0.6; // 4.35..4.95m: challenges deep grinders, returnable by alert players!
     } else if (shotType === 'slice') {
       base.z = effectiveZone.endsWith('_short') ? 5.6 + this.rng() * 0.7 : 7.15 + this.rng() * 0.55;
     } else if (shotType === 'lob') {

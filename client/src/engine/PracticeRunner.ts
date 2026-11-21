@@ -77,8 +77,14 @@ export const BUILTIN_SCRIPTED_PLAYERS: Record<string, ScriptedPlayerProfile> = {
       right_short: 0.02,
     },
     // Rock solid on deep topspin/flat rallies, vulnerable (but never 100% helpless!) to short dropshots!
-    shotVulnerability: { dropshot: 0.52, slice: 0.14, topspin: 0.02, flat: 0.05, lob: 0.0 },
-    aimVulnerability: { left_short: 0.42, right_short: 0.42, left_deep: 0.05, middle_deep: 0.02, right_deep: 0.05 },
+    shotVulnerability: { dropshot: 0.62, slice: 0.14, topspin: 0.02, flat: 0.05, lob: 0.0 },
+    aimVulnerability: {
+      left_short: 0.48,
+      right_short: 0.48,
+      left_deep: 0.05,
+      middle_deep: 0.02,
+      right_deep: 0.05,
+    },
     avgPower: 0.68,
   },
   even: {
@@ -94,8 +100,14 @@ export const BUILTIN_SCRIPTED_PLAYERS: Record<string, ScriptedPlayerProfile> = {
       middle_short: 0.08,
       right_short: 0.12,
     },
-    shotVulnerability: { topspin: 0.08, flat: 0.12, slice: 0.1, dropshot: 0.06, lob: 0.1 },
-    aimVulnerability: { left_deep: 0.1, middle_deep: 0.06, right_deep: 0.1, left_short: 0.08, right_short: 0.08 },
+    shotVulnerability: { topspin: 0.15, flat: 0.2, slice: 0.18, dropshot: 0.12, lob: 0.16 },
+    aimVulnerability: {
+      left_deep: 0.16,
+      middle_deep: 0.08,
+      right_deep: 0.16,
+      left_short: 0.14,
+      right_short: 0.14,
+    },
     avgPower: 0.72,
   },
 };
@@ -349,7 +361,12 @@ export function runPracticeBatch(
 
         // Compute realistic vulnerability from opponent's chosen shot & aim!
         const shotVuln = oppCtx ? (profile.shotVulnerability[oppCtx.shotType] ?? 0.06) : 0.04;
-        const aimVuln = oppCtx ? (profile.aimVulnerability[oppCtx.aim] ?? 0.06) : 0.04;
+        const baseAimVuln = oppCtx ? (profile.aimVulnerability[oppCtx.aim] ?? 0.06) : 0.04;
+        // Dropshots always land short even when `aim` was `middle_deep`, so apply short-court aim vulnerability!
+        const aimVuln =
+          oppCtx?.shotType === 'dropshot'
+            ? Math.max(baseAimVuln, profile.aimVulnerability.left_short ?? 0.1)
+            : baseAimVuln;
         // If player is already stepped inside the court (< 8.2m), dropshots lose their surprise advantage!
         const rawWeakness = Math.min(0.62, shotVuln * 0.62 + aimVuln * 0.62);
         const weaknessPenalty =

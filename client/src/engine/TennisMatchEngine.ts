@@ -338,9 +338,9 @@ export class TennisMatchEngine {
 
     // Comfortable shots stay in play reliably (~2.5-3.5 player shots per point); counters create real pressure without 100% free points!
     const forcedErrorProb =
-      weaknessPenalty < 0.14 && quality > 0.68
-        ? 0.04
-        : clamp((1 - quality) * 0.58 + weaknessPenalty * 0.68, 0.04, 0.78);
+      weaknessPenalty < 0.14 && quality > 0.72
+        ? 0.065
+        : clamp(0.05 + (1 - quality) * 0.56 + weaknessPenalty * 0.68, 0.065, 0.78);
     return { reachable: true, quality, lateralGap, depthGap, forcedErrorProb };
   }
 
@@ -582,9 +582,9 @@ export class TennisMatchEngine {
     // - At 1.25: crisp 0.03s tour reaction -> tracks down nearly everything!
     const speedMul = this.brain.getSettings().opponent_speed;
     const speedNorm = (speedMul - 0.85) / 0.4; // -0.5 at 0.65, 0 at 0.85, +1.0 at 1.25
-    const baseDelay = clamp(0.11 - speedNorm * 0.16 + assessment.quality * 0.04, 0.02, 0.3);
+    const baseDelay = clamp(0.08 - speedNorm * 0.16 + assessment.quality * 0.03, 0.01, 0.28);
     this.opponentReactionDelaySec =
-      this.opponentAnticipatedMove !== 'stay' ? Math.max(0.015, baseDelay * 0.3) : baseDelay;
+      this.opponentAnticipatedMove !== 'stay' ? Math.max(0.01, baseDelay * 0.25) : baseDelay;
     this.opponentAnticipatedMove = 'stay';
     this.renderState.ball.landingMarker = null;
 
@@ -857,11 +857,11 @@ export class TennisMatchEngine {
     const speedMul = this.brain.getSettings().opponent_speed;
     const speedNorm = (speedMul - 0.85) / 0.4; // -0.5 at 0.65, 0 at 0.85, +1.0 at 1.25
     const stretchDist = isServe ? 0 : Math.hypot(b.x - opp.x, b.z - opp.z);
-    const baseErr = clamp(0.11 - speedNorm * 0.09, 0.015, 0.22);
-    const stretchErr = Math.max(0, stretchDist - 0.7) * clamp(0.2 - speedNorm * 0.1, 0.05, 0.28);
+    const baseErr = clamp(0.11 - speedNorm * 0.13, 0.01, 0.24);
+    const stretchErr = Math.max(0, stretchDist - 0.75) * clamp(0.19 - speedNorm * 0.12, 0.03, 0.3);
     const paceErr =
-      Math.max(0, this.lastHumanShotQuality - 0.78) * clamp(0.24 - speedNorm * 0.14, 0.05, 0.34);
-    const oppErrProb = isServe ? 0 : clamp(baseErr + stretchErr + paceErr, 0.015, 0.55);
+      Math.max(0, this.lastHumanShotQuality - 0.8) * clamp(0.22 - speedNorm * 0.16, 0.03, 0.36);
+    const oppErrProb = isServe ? 0 : clamp(baseErr + stretchErr + paceErr, 0.01, 0.58);
     const oppForcedErr = !isServe && this.rng() < oppErrProb;
 
     const target = isServe
@@ -1019,18 +1019,21 @@ export class TennisMatchEngine {
 
     if (this.renderState.phase === 'rally' && this.hitter === 'ai' && this.ballEngine.state.active) {
       const land = this.renderState.ball.landingMarker;
-      // Alert all-court players sprint in briskly (6.6 m/s); deep-planted baseline grinders react slower to short dropshots (3.6 m/s)!
+      const b = this.ballEngine.state;
+      // Deep-planted baseline grinders react late to disguised short dropshots (after first bounce / mid-court),
+      // whereas alert/all-court players read short balls early and sprint right onto them!
+      const deepGrinderLateRead = this.playerHomeZ >= 11.3 && Boolean(land && land.z < 5.6) && b.z < 2.8;
       const isShortBall = Boolean(land && land.z < 6.2);
       maxSpeed =
         isShortBall && this.playerHomeZ >= 11.3
-          ? 3.65
+          ? 3.15
           : this.playerHomeZ >= 11.3
             ? 5.2
-            : 6.6;
-      if (land) {
+            : 6.7;
+      if (land && !deepGrinderLateRead) {
         targetX = clamp(this.playerArmX * 2.5 + land.x * 0.45, -4.8, 4.8);
         if (land.z < 7.5) {
-          targetZ = clamp(land.z + 1.15, 5.0, this.playerHomeZ);
+          targetZ = clamp(land.z + 1.15, 4.8, this.playerHomeZ);
         } else if (land.z > 9.2 && p.z < 9.0) {
           targetZ = clamp(land.z + 0.9, 8.8, this.playerHomeZ);
         } else {
@@ -1063,7 +1066,8 @@ export class TennisMatchEngine {
   private updateOpponentMovement(dt: number) {
     const opp = this.renderState.opponent;
     const speedMul = this.brain.getSettings().opponent_speed;
-    const maxSpeed = 6.1 * speedMul;
+    // Scales smoothly across [0.65..1.25]: 3.75 m/s at 0.65 -> 5.75 m/s at 0.85 -> 8.1 m/s at 1.25
+    const maxSpeed = 6.75 * Math.pow(speedMul / 0.85, 1.35) * 0.85;
 
     const dx = this.opponentTargetPos.x - opp.x;
     const dz = this.opponentTargetPos.z - opp.z;

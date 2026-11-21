@@ -284,18 +284,30 @@ export class BallFlightEngine {
 
       // Asymmetric accessibility bounce:
       // - On human +Z side (bz > 0, AI's shot arriving to us): gently cushion post-bounce pace
-      //   so the ball comes cleanly into the human's swing zone without rushing webcam/IMU reaction!
+      //   so the ball comes cleanly into the human's swing zone (~5.2-6.5 m/s) while guaranteeing
+      //   ordinary serves/groundstrokes NEVER double-bounce before reaching z = 11.8m!
       // - On AI -Z side (bz < 0, human's shot arriving to AI): keep 100% fast physical speed!
       if (s.bounceCount === 1 && s.z > 0 && s.vz > 0) {
-        const ret = HUMAN_SIDE_BOUNCE_RETENTION[s.shotType] ?? 0.6;
+        const ret = HUMAN_SIDE_BOUNCE_RETENTION[s.shotType] ?? 0.42;
         s.vx *= ret;
         s.vz *= ret;
         if (s.shotType === 'slice') {
-          s.vy = clamp(s.vy * 0.78, 2.3, 3.5);
+          s.vy = clamp(s.vy * 0.9, 3.4, 4.1);
         } else if (s.shotType === 'dropshot') {
-          s.vy = clamp(s.vy * 0.85, 2.7, 3.6);
+          s.vy = clamp(s.vy * 0.92, 3.0, 3.8);
         } else {
-          s.vy = clamp(s.vy * 0.96, 3.2, 4.6);
+          s.vy = clamp(s.vy * 1.06, 4.2, 5.0);
+        }
+
+        // Guarantee non-dropshot AI shots reach past the baseline (z >= 12.2m) before 2nd bounce
+        if (s.shotType !== 'dropshot') {
+          const airtime = Math.max(0.65, (2 * s.vy) / PHYSICS.GRAVITY);
+          const minCarryVz = Math.max(0, 12.2 - s.z) / airtime;
+          if (s.vz < minCarryVz) {
+            const boost = minCarryVz / Math.max(0.5, s.vz);
+            s.vz = minCarryVz;
+            s.vx *= Math.min(1.3, boost);
+          }
         }
       }
 

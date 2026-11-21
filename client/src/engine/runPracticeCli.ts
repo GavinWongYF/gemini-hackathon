@@ -135,17 +135,24 @@ export async function connectPracticeWorker(wsUrl: string) {
   });
 }
 
-// Execute directly when invoked as CLI script
-const args = typeof process !== 'undefined' ? process.argv.slice(2) : [];
-if (args.includes('--benchmark')) {
-  void runLocalBenchmark();
-} else if (args.includes('--help') || args.includes('-h')) {
-  console.log('Usage: npm run practice [-- --ws ws://localhost:8000/ws] | npm run practice:benchmark');
-} else {
-  const wsIdx = args.lastIndexOf('--ws');
-  const wsUrl =
-    wsIdx >= 0 && args[wsIdx + 1]
-      ? args[wsIdx + 1]
-      : (typeof process !== 'undefined' && process.env.AGENT_WS_URL) || 'ws://localhost:8000/ws';
-  void connectPracticeWorker(wsUrl);
+// Execute directly only when invoked as CLI script (never when imported as a module)
+const isDirectCli =
+  typeof process !== 'undefined' &&
+  Array.isArray(process.argv) &&
+  Boolean(process.argv[1] && process.argv[1].includes('runPracticeCli'));
+
+if (isDirectCli) {
+  const args = process.argv.slice(2);
+  if (args.includes('--benchmark')) {
+    void runLocalBenchmark();
+  } else if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: npm run practice [-- --ws ws://localhost:8000/ws] | npm run practice:benchmark');
+  } else {
+    const wsIdx = args.lastIndexOf('--ws');
+    const wsUrl =
+      wsIdx >= 0 && args[wsIdx + 1]
+        ? args[wsIdx + 1]
+        : process.env.AGENT_WS_URL || 'ws://localhost:8000/ws';
+    void connectPracticeWorker(wsUrl);
+  }
 }
