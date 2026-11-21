@@ -1,10 +1,5 @@
-// Zero-edit 1 Hz `court` JPEG frame capturer for Felix & Gavin's `frames` WebSocket message.
-// Never requires modifying Akhil's `CourtScene.tsx`:
-//   1. First probes Akhil's WebGL `<canvas>` inside `.scene-root` — if non-blank pixels are present,
-//      scales it directly to a ~384px JPEG.
-//   2. If WebGL cleared its drawing buffer (`preserveDrawingBuffer` false) or fallback 2D mode is active,
-//      renders a crisp 384x288 top-down broadcast court diagram from `MatchRenderState` + `RecordedShot[]`
-//      so Gemini Decision 1 (`watcher`) ALWAYS receives a clean, informative `court` frame!
+// Zero-edit 1 Hz `court` JPEG frame capturer (captures Akhil's WebGL 3D scene directly)
+// + clean architectural 2D court fallback renderer.
 
 import { COURT, type MatchRenderState, type RecordedShot } from '@shared/contracts';
 
@@ -57,7 +52,7 @@ export function captureCourtJpeg(
   if (glCanvas && isWebGlCanvasNonBlank(glCanvas)) {
     ctx.drawImage(glCanvas, 0, 0, TARGET_W, TARGET_H);
   } else {
-    drawTacticalCourt(ctx, TARGET_W, TARGET_H, state, recentShots);
+    drawTacticalCourt(ctx, TARGET_W, TARGET_H, state, recentShots, false);
   }
 
   const dataUrl = scratchCanvas.toDataURL('image/jpeg', quality);
@@ -71,29 +66,31 @@ export function drawTacticalCourt(
   h: number,
   state: MatchRenderState,
   recentShots: RecordedShot[],
+  showReplayOverlay = false,
 ) {
-  // Stadium apron
-  ctx.fillStyle = '#0f172a';
+  ctx.fillStyle = '#e8eef5';
   ctx.fillRect(0, 0, w, h);
 
-  const padX = w * 0.2;
-  const padY = h * 0.08;
-  const courtW = w - padX * 2;
-  const courtH = h - padY * 2;
+  const courtAspect = (COURT.PAINTED_HALF_W * 2) / (COURT.BASELINE_Z * 2);
+  let courtH = h * 0.82;
+  let courtW = courtH * courtAspect;
+  if (courtW > w * 0.72) {
+    courtW = w * 0.72;
+    courtH = courtW / courtAspect;
+  }
+  const padX = (w - courtW) * 0.5;
+  const padY = (h - courtH) * 0.5;
 
   const toCanvasX = (x: number) => w * 0.5 + (x / COURT.PAINTED_HALF_W) * (courtW * 0.5);
   const toCanvasY = (z: number) => h * 0.5 + (z / COURT.BASELINE_Z) * (courtH * 0.5);
 
-  // Inner Grand Slam hard court
-  ctx.fillStyle = '#1d4ed8';
+  ctx.fillStyle = '#1967d2';
   ctx.fillRect(padX, padY, courtW, courtH);
 
-  // Court lines
-  ctx.strokeStyle = '#f8fafc';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.lineWidth = Math.max(1.5, w * 0.0025);
   ctx.strokeRect(padX, padY, courtW, courtH);
 
-  // Service lines & center service line
   const svcTopY = toCanvasY(-COURT.SERVICE_LINE_Z);
   const svcBotY = toCanvasY(COURT.SERVICE_LINE_Z);
   ctx.beginPath();
@@ -105,57 +102,73 @@ export function drawTacticalCourt(
   ctx.lineTo(w * 0.5, svcBotY);
   ctx.stroke();
 
-  // Net line (z = 0)
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = Math.max(2.5, w * 0.004);
   ctx.beginPath();
   ctx.moveTo(padX - 10, h * 0.5);
   ctx.lineTo(padX + courtW + 10, h * 0.5);
   ctx.stroke();
 
-  // Recent shot trajectories & bounce dots
-  for (const shot of recentShots.slice(-6)) {
-    if (shot.arc.length >= 2) {
-      ctx.strokeStyle = shot.actor === 'human' ? 'rgba(56, 189, 248, 0.7)' : 'rgba(251, 113, 133, 0.7)';
-      ctx.lineWidth = 1.75;
-      ctx.beginPath();
-      shot.arc.forEach((pt, idx) => {
-        const cx = toCanvasX(pt.x);
-        const cy = toCanvasY(pt.z);
-        if (idx === 0) ctx.moveTo(cx, cy);
-        else ctx.lineTo(cx, cy);
-      });
-      ctx.stroke();
-    }
-    if (shot.bouncePos) {
-      ctx.fillStyle = shot.actor === 'human' ? '#38bdf8' : '#fb7185';
-      ctx.beginPath();
-      ctx.arc(toCanvasX(shot.bouncePos.x), toCanvasY(shot.bouncePos.z), 3.5, 0, Math.PI * 2);
-      ctx.fill();
+  if (showReplayOverlay && recentShots.length > 0) {
+    for (const shot of recentShots.slice(-8)) {
+      if (shot.bouncePos) {
+        const bx = toCanvasX(shot.bouncePos.x);
+        const by = toCanvasY(shot.bouncePos.z);
+        const r = Math.max(18, courtW * 0.09);
+        const grad = ctx.createRadialGradient(bx, by, 2, bx, by, r);
+        if (shot.actor === 'human') {
+          grad.addColorStop(0, 'rgba(138, 180, 248, 0.72)');
+          grad.addColorStop(1, 'rgba(138, 180, 248, 0)');
+        } else {
+          grad.addColorStop(0, 'rgba(242, 139, 130, 0.72)');
+          grad.addColorStop(1, 'rgba(242, 139, 130, 0)');
+        }
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(bx, by, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (shot.arc.length >= 2) {
+        ctx.strokeStyle =
+          shot.actor === 'human' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(253, 214, 99, 0.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        shot.arc.forEach((pt, idx) => {
+          const cx = toCanvasX(pt.x);
+          const cy = toCanvasY(pt.z);
+          if (idx === 0) ctx.moveTo(cx, cy);
+          else ctx.lineTo(cx, cy);
+        });
+        ctx.stroke();
+      }
     }
   }
 
-  // Opponent (top, -Z)
   const oppX = toCanvasX(state.opponent.x);
   const oppY = toCanvasY(state.opponent.z);
-  ctx.fillStyle = '#f97316';
+  ctx.fillStyle = '#d93025';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(oppX, oppY, 7, 0, Math.PI * 2);
   ctx.fill();
+  ctx.stroke();
 
-  // Human player (bottom, +Z)
   const plX = toCanvasX(state.player.x);
   const plY = toCanvasY(state.player.z);
-  ctx.fillStyle = '#38bdf8';
+  ctx.fillStyle = '#0b57d0';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(plX, plY, 7, 0, Math.PI * 2);
   ctx.fill();
+  ctx.stroke();
 
-  // Live ball + predicted landing marker
   if (state.ball.active) {
     if (state.ball.landingMarker) {
-      ctx.strokeStyle = '#fde047';
-      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(
         toCanvasX(state.ball.landingMarker.x),
@@ -166,9 +179,12 @@ export function drawTacticalCourt(
       );
       ctx.stroke();
     }
-    ctx.fillStyle = '#d9ff2b';
+    ctx.fillStyle = '#d4e157';
+    ctx.strokeStyle = '#1f1f1f';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(toCanvasX(state.ball.x), toCanvasY(state.ball.z), 4.5, 0, Math.PI * 2);
+    ctx.arc(toCanvasX(state.ball.x), toCanvasY(state.ball.z), 5, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
   }
 }

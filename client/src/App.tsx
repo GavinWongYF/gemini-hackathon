@@ -1,10 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { HardwareTestView } from './hardware/HardwareTestView';
-import { LiveMatchView } from './dashboard/LiveMatchView';
 
 export const App: React.FC = () => {
-  const [tab, setTab] = useState<'hardware' | 'match'>('hardware');
-
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div
@@ -20,44 +17,31 @@ export const App: React.FC = () => {
         }}
       >
         <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>
-          🎾 Adaptive AI Tennis
+          🎾 Adaptive AI Tennis — Hardware & Classifier
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button
-            onClick={() => setTab('hardware')}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <a
+            href="/match"
+            target="_blank"
+            rel="noreferrer"
             style={{
-              background: tab === 'hardware' ? '#2563eb' : 'rgba(30,41,59,0.8)',
+              background: '#2563eb',
               color: '#f8fafc',
               border: '1px solid rgba(148,163,184,0.25)',
               borderRadius: 6,
               padding: '4px 11px',
               fontSize: 12,
               fontWeight: 600,
-              cursor: 'pointer',
+              textDecoration: 'none',
             }}
           >
-            Hardware & Calibration
-          </button>
-          <button
-            onClick={() => setTab('match')}
-            style={{
-              background: tab === 'match' ? '#2563eb' : 'rgba(30,41,59,0.8)',
-              color: '#f8fafc',
-              border: '1px solid rgba(148,163,184,0.25)',
-              borderRadius: 6,
-              padding: '4px 11px',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Live Match + AI Dashboard
-          </button>
+            Open 3D Match (/match) ↗
+          </a>
         </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        {tab === 'hardware' ? <HardwareTestView /> : <LiveMatchView />}
+        <HardwareTestView />
       </div>
     </div>
   );

@@ -11,8 +11,8 @@
 | --- | --- | --- |
 | **Ethan — Hardware Chat (`d37b0bad`)** | `client/src/hardware/*` (`firmware/`, `ble_bridge.py`, `MadgwickAhrs.ts`, `ImuSwingClassifier.ts`, `WebcamArmTracker.ts`, `HardwareInputManager.ts`, `HardwareTestView.tsx`) | Live 100 Hz BLE/Serial M5 IMU + Madgwick AHRS + universal shot classifier + cross-body webcam arm tracker |
 | **Ethan — Engine & AI Chat (`0f243a7a`)** | `shared/agentProtocol.ts`, `client/src/ai/*`, `client/src/engine/*`, `TEAM_SYNC.md` | Draft 2 + 12:45 PM WS protocol, single `pick()` (`shot_type`, `aim`, `position`, `anticipate`), fixed-1/60s physics, >2000x real-time headless `practice_run` runner |
-| **Ethan — Dashboard / App Shell** | `client/src/dashboard/*` (`SceneSlot.tsx`, `LiveMatchView.tsx`, `PauseDashboard.tsx`, `CourtFrameCapture.ts`), `client/src/App.tsx` | Top-bar tab switcher (`Hardware & Calibration` <-> `Live Match + AI Dashboard`), `<SceneSlot>` auto-mounts Akhil's `CourtScene` on push |
-| **Akhil (Teammate — DO NOT EDIT)** | `blender/`, `client/public/models/`, `client/src/scene/*` | 3D stadium, rigged athletes, R3F `CourtScene` reading `matchStateRef.current` (`MatchRenderState`). Dry-run typechecked with 0 errors |
+| **Ethan — Dashboard / App Shell** | `client/src/dashboard/*`, `client/src/App.tsx`, `client/src/matchMain.tsx`, `client/index.html`, `client/match.html`, `client/vite.config.ts` | Two separate pages: `/` (`index.html`) = Ethan's Hardware & Classifier UI; `/match` (`match.html`) = Akhil's 3D `CourtScene` + Felix & Gavin's 3-column `<npc-panel side="left\|right">` Google-clean live match |
+| **Akhil (Teammate — DO NOT EDIT)** | `blender/`, `client/public/models/`, `client/src/scene/*` | Merged (`f3d0e9f`): Gemini Arena 3D stadium, Gemini vs GPT rigged athletes + Mixamo strokes/volleys/split-step, R3F `CourtScene` |
 | **Felix & Gavin (Teammates — DO NOT EDIT)** | `agents/` (`server/`, `sim/`, `eval/`, `demo/tennis-screen/`, `sdk/`, `docs/`) | End-to-end Gemini 4 Carbon/Neon + Decision 1 WS backend (`ws://localhost:8000/ws`, viewer `/screen/`) |
 
 ---

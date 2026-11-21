@@ -398,8 +398,9 @@ export class TennisMatchEngine {
   ): boolean {
     const p = this.renderState.player;
     const b = this.ballEngine.state;
+    const isAirVolley = this.isBallReturnableByPlayer() && b.bounceCount === 0 && b.z < 9.5;
     p.swingSide = swing.wing;
-    p.swingShotType = swing.shotType;
+    p.swingShotType = isAirVolley ? 'volley' : swing.shotType;
     p.swingTriggerId += 1;
 
     if (!this.isBallReturnableByPlayer() || opts?.forceMiss) {
@@ -885,9 +886,13 @@ export class TennisMatchEngine {
     if (winner === 'player') {
       score.humanPoints += 1;
       score.lastCall = how === 'out' ? 'OUT — PLAYER POINT' : how === 'net' ? 'NET — PLAYER POINT' : 'WINNER!';
+      this.renderState.player.animState = 'celebrate';
+      this.renderState.opponent.animState = 'idle';
     } else {
       score.aiPoints += 1;
       score.lastCall = how === 'out' ? 'OUT — AI POINT' : how === 'net' ? 'NET — AI POINT' : 'AI WINNER';
+      this.renderState.opponent.animState = 'celebrate';
+      this.renderState.player.animState = 'idle';
     }
 
     const willBreak =
@@ -971,11 +976,15 @@ export class TennisMatchEngine {
       p.vz = (dz / dist) * (step / dt);
       p.x += (dx / dist) * step;
       p.z += (dz / dist) * step;
-      p.animState = Math.abs(p.vx) > Math.abs(p.vz) ? (p.vx > 0 ? 'run_right' : 'run_left') : p.vz < 0 ? 'run_forward' : 'run_back';
+      if (this.renderState.phase === 'rally') {
+        p.animState = Math.abs(p.vx) > Math.abs(p.vz) ? (p.vx > 0 ? 'run_right' : 'run_left') : p.vz < 0 ? 'run_forward' : 'run_back';
+      }
     } else {
       p.vx = 0;
       p.vz = 0;
-      p.animState = 'idle';
+      if (this.renderState.phase === 'rally') {
+        p.animState = 'idle';
+      }
     }
   }
 

@@ -5,13 +5,25 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 /**
  * Built-in WebSocket relay on `/ws-hardware` so the M5 IMU (over Wi-Fi) or
- * an optional local serial bridge can stream live 100Hz IMU packets directly
- * into the browser client with zero extra servers.
+ * `ble_bridge.py` streams live 100Hz IMU packets simultaneously to BOTH
+ * `/` (Hardware & Classifier) and `/match` (3D Gemini Arena + AI Live Match).
+ * Also routes `/match` and `/3d` cleanly to `/match.html`.
  */
-function hardwareWsRelayPlugin(): Plugin {
+function hardwareAndMultiPagePlugin(): Plugin {
   return {
-    name: 'hardware-ws-relay',
+    name: 'hardware-ws-and-mpa',
     configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url) {
+          const cleanPath = req.url.split('?')[0];
+          if (cleanPath === '/match' || cleanPath === '/match/' || cleanPath === '/3d' || cleanPath === '/3d/') {
+            const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+            req.url = `/match.html${query}`;
+          }
+        }
+        next();
+      });
+
       if (!server.httpServer) return;
       const wss = new WebSocketServer({ noServer: true });
       const clients = new Set<WebSocket>();
@@ -43,10 +55,19 @@ function hardwareWsRelayPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), hardwareWsRelayPlugin()],
+  plugins: [react(), hardwareAndMultiPagePlugin()],
   resolve: {
     alias: {
       '@shared': path.resolve(__dirname, '../shared'),
+    },
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        match: path.resolve(__dirname, 'match.html'),
+      },
     },
   },
   server: {
