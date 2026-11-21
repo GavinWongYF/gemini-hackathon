@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "holdoutPct": 0.05,
+  "features": {
+    "depth": true,
+    "depth_ctiming": true,
+    "depth_cscore": true,
+    "depth_shotrisk": true,
+    "depth_aiweak": true,
+    "depth_pointwhy": true,
+    "depth_moves": true,
+    "depth_riskring": true,
+    "depth_finish": true,
+    "depth_footwork": true,
+    "depth_plays": true,
+    "depth_pointstats": true
+  },
+  "experiments": {
+    "aa_check": {
+      "status": "running",
+      "traffic": 1,
+      "variants": [
+        { "id": "a", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "ladder": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "firstball": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "quitask": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "matchend": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "bowldefault": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "nextdate": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "airival": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "pcoach": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "pgoal": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "pnext": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    },
+    "bowlbest": {
+      "status": "off",
+      "traffic": 1,
+      "variants": [
+        { "id": "control", "weight": 0.5 },
+        { "id": "b", "weight": 0.5 }
+      ]
+    }
+  }
+}
