@@ -86,7 +86,7 @@ export interface GameSetupMessage {
   mode: MatchMode;
   goal: string;
   plan: {
-    rounds: number;
+    rounds?: number;
     break_every: number;
     break_seconds: number;
     update_seconds?: number;
@@ -245,9 +245,10 @@ export const TENNIS_SETTINGS_BOUNDS = {
 } as const;
 
 export const TENNIS_MATCH_PLAN = {
-  rounds: 6,
-  break_every: 2,
-  break_seconds: 5,
+  /** Open-ended live demo by default (no point limit; presenter stops or pauses via `P` whenever ready) */
+  rounds: undefined as number | undefined,
+  break_every: 0,
+  break_seconds: 0,
   update_seconds: 20,
 } as const;
 
@@ -321,7 +322,9 @@ export function createTennisSetup(opts: TennisSetupOptions): GameSetupMessage {
       opts.goal ??
       'Start beatable. Work out what this player relies on to win points and take it away, one habit at a time, until the player wins about half the points. Win by choosing better shots, never by hitting harder or faster.',
     plan: {
-      rounds: opts.rounds ?? TENNIS_MATCH_PLAN.rounds,
+      ...(typeof (opts.rounds ?? TENNIS_MATCH_PLAN.rounds) === 'number'
+        ? { rounds: opts.rounds ?? TENNIS_MATCH_PLAN.rounds }
+        : {}),
       break_every: opts.breakEvery ?? TENNIS_MATCH_PLAN.break_every,
       break_seconds: opts.breakSeconds ?? TENNIS_MATCH_PLAN.break_seconds,
       update_seconds: opts.updateSeconds ?? TENNIS_MATCH_PLAN.update_seconds,

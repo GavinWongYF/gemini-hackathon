@@ -83,8 +83,10 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
   };
   const bs = badgeStyles[badge.tone];
 
-  const totalRounds = score.totalDemoPoints;
-  const activePointIdx = Math.min(score.pointIndex, totalRounds);
+  const hasPointCap = Number.isFinite(score.totalDemoPoints) && score.totalDemoPoints > 0;
+  const totalRounds = hasPointCap ? score.totalDemoPoints : 0;
+  const activePointIdx = hasPointCap ? Math.min(score.pointIndex, totalRounds) : score.pointIndex;
+  const visibleHistory = hasPointCap ? pointWinners : pointWinners.slice(-12);
 
   return (
     <div
@@ -186,9 +188,13 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
 
         <span style={{ width: 1, height: 16, background: '#e5e4df', flexShrink: 0 }} />
 
-        {/* Round-by-Round Pip Timeline with Adaptation Checkpoint Dividers */}
+        {/* Point Counter + Rolling Pip Timeline */}
         <div
-          title={`Round ${activePointIdx} of ${totalRounds} (Adaptation checkpoint every ${breakEvery} points)`}
+          title={
+            hasPointCap
+              ? `Round ${activePointIdx} of ${totalRounds}`
+              : `Open-ended live session · Point ${activePointIdx} (press P anytime for 3D replay)`
+          }
           style={{ display: 'flex', alignItems: 'center', gap: 4 }}
         >
           <span
@@ -201,46 +207,73 @@ export const PauseDashboard: React.FC<CourtToolbarProps> = ({
               marginRight: 3,
             }}
           >
-            PT {activePointIdx}/{totalRounds}
+            {hasPointCap ? `PT ${activePointIdx}/${totalRounds}` : `PT ${activePointIdx}`}
           </span>
-          {Array.from({ length: totalRounds }, (_, i) => {
-            const winner = pointWinners[i];
-            const isCurrent = i + 1 === score.pointIndex && phase !== 'match_over';
-            const isBreakAfter = breakEvery > 0 && (i + 1) % breakEvery === 0 && i + 1 < totalRounds;
-            const bg =
-              winner === 'player'
-                ? '#2563eb'
-                : winner === 'opponent'
-                  ? '#f97316'
-                  : isCurrent
-                    ? '#141413'
-                    : '#e5e4df';
+          {hasPointCap ? (
+            Array.from({ length: totalRounds }, (_, i) => {
+              const winner = visibleHistory[i];
+              const isCurrent = i + 1 === score.pointIndex && phase !== 'match_over';
+              const isBreakAfter = breakEvery > 0 && (i + 1) % breakEvery === 0 && i + 1 < totalRounds;
+              const bg =
+                winner === 'player'
+                  ? '#2563eb'
+                  : winner === 'opponent'
+                    ? '#f97316'
+                    : isCurrent
+                      ? '#141413'
+                      : '#e5e4df';
 
-            return (
-              <React.Fragment key={i}>
-                <span
-                  style={{
-                    width: 14,
-                    height: 6,
-                    borderRadius: 2,
-                    background: bg,
-                    opacity: winner ? 1 : isCurrent ? 0.85 : 0.75,
-                    transition: 'background-color 160ms ease',
-                  }}
-                />
-                {isBreakAfter && (
+              return (
+                <React.Fragment key={i}>
                   <span
                     style={{
-                      width: 1,
-                      height: 10,
-                      background: '#c8c7c0',
-                      margin: '0 2px',
+                      width: 14,
+                      height: 6,
+                      borderRadius: 2,
+                      background: bg,
+                      opacity: winner ? 1 : isCurrent ? 0.85 : 0.75,
+                      transition: 'background-color 160ms ease',
                     }}
                   />
-                )}
-              </React.Fragment>
-            );
-          })}
+                  {isBreakAfter && (
+                    <span
+                      style={{
+                        width: 1,
+                        height: 10,
+                        background: '#c8c7c0',
+                        margin: '0 2px',
+                      }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })
+          ) : (
+            <>
+              {visibleHistory.map((winner, idx) => (
+                <span
+                  key={idx}
+                  style={{
+                    width: 11,
+                    height: 6,
+                    borderRadius: 2,
+                    background: winner === 'player' ? '#2563eb' : '#f97316',
+                  }}
+                />
+              ))}
+              {phase !== 'match_over' && (
+                <span
+                  style={{
+                    width: 11,
+                    height: 6,
+                    borderRadius: 2,
+                    background: '#141413',
+                    opacity: 0.85,
+                  }}
+                />
+              )}
+            </>
+          )}
         </div>
 
         {/* Live Phase / Call Chip */}

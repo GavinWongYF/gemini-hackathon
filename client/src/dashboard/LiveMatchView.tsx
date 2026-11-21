@@ -95,7 +95,7 @@ const TelemetryPill: React.FC<{
 
 export const LiveMatchView: React.FC = () => {
   const matchStateRef = useRef<MatchRenderState>(
-    createInitialMatchRenderState(TENNIS_MATCH_PLAN.rounds),
+    createInitialMatchRenderState(TENNIS_MATCH_PLAN.rounds ?? 0),
   );
   const sceneContainerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<TennisMatchEngine | null>(null);
@@ -193,9 +193,9 @@ export const LiveMatchView: React.FC = () => {
     setMatchId(agent.getMatchId());
 
     const engine = new TennisMatchEngine(brain, {
-      totalDemoPoints: TENNIS_MATCH_PLAN.rounds,
+      totalDemoPoints: TENNIS_MATCH_PLAN.rounds ?? 0,
       breakEvery: TENNIS_MATCH_PLAN.break_every,
-      enableDemoPauses: true,
+      enableDemoPauses: TENNIS_MATCH_PLAN.break_every > 0,
       sink: {
         onAgentEvent: (evt) => {
           agent.sendEvent(evt);

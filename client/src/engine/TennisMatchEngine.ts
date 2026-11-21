@@ -79,7 +79,7 @@ export interface ReturnContactAssessment {
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-export function createInitialMatchRenderState(totalDemoPoints = 6): MatchRenderState {
+export function createInitialMatchRenderState(totalDemoPoints = 0): MatchRenderState {
   return {
     ball: {
       x: 0,
@@ -184,11 +184,11 @@ export class TennisMatchEngine {
   constructor(brain: OpponentBrain, options: TennisMatchOptions = {}) {
     this.brain = brain;
     this.opts = {
-      totalDemoPoints: options.totalDemoPoints ?? 6,
-      breakEvery: options.breakEvery ?? 1,
+      totalDemoPoints: options.totalDemoPoints ?? 0,
+      breakEvery: options.breakEvery ?? 0,
       pointOverPauseSec: options.pointOverPauseSec ?? 1.4,
       serveWindupSec: options.serveWindupSec ?? 0.65,
-      enableDemoPauses: options.enableDemoPauses ?? true,
+      enableDemoPauses: options.enableDemoPauses ?? false,
     };
     this.rng = options.rng ?? Math.random;
     this.sink = options.sink ?? {};
@@ -256,7 +256,8 @@ export class TennisMatchEngine {
   /** Resumes play after `demo_pause` (swapping in any newly arrived agent strategy first). */
   resumeFromDemoPause() {
     if (this.renderState.phase !== 'demo_pause') return;
-    if (this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
+    const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
+    if (hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
       this.setPhase('match_over');
       return;
     }
@@ -959,9 +960,11 @@ export class TennisMatchEngine {
       this.renderState.player.animState = 'idle';
     }
 
+    const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
     const willBreak =
       this.opts.enableDemoPauses &&
-      (finishedRound % this.opts.breakEvery === 0 || finishedRound >= this.opts.totalDemoPoints);
+      ((this.opts.breakEvery > 0 && finishedRound % this.opts.breakEvery === 0) ||
+        (hasPointCap && finishedRound >= this.opts.totalDemoPoints));
 
     this.sink.onAgentRoundEnd?.({
       round: finishedRound,
@@ -993,9 +996,11 @@ export class TennisMatchEngine {
 
   private advanceAfterPointOver() {
     const finishedRound = this.renderState.score.pointIndex - 1;
+    const hasPointCap = Number.isFinite(this.opts.totalDemoPoints) && this.opts.totalDemoPoints > 0;
     const isBreak =
       this.opts.enableDemoPauses &&
-      (finishedRound % this.opts.breakEvery === 0 || finishedRound >= this.opts.totalDemoPoints);
+      ((this.opts.breakEvery > 0 && finishedRound % this.opts.breakEvery === 0) ||
+        (hasPointCap && finishedRound >= this.opts.totalDemoPoints));
 
     if (isBreak) {
       this.renderState.replayArcs = this.shotHistory.slice(-10);
@@ -1003,7 +1008,7 @@ export class TennisMatchEngine {
       return;
     }
 
-    if (this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
+    if (hasPointCap && this.renderState.score.pointIndex > this.opts.totalDemoPoints) {
       this.setPhase('match_over');
       return;
     }
