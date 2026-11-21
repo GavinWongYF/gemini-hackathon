@@ -41,6 +41,14 @@ function wrapAngleRad(rad: number): number {
   return ((((rad + Math.PI) % twoPi) + twoPi) % twoPi) - Math.PI;
 }
 
+/** Strokes start this long before the ball reaches the athlete (s): the clip's own wind-up, as in Sportacle tennis. */
+const ANTICIPATE_S = 0.42;
+/** The player's racket holds at this share of the way to contact until their real swing arrives. */
+const TAKE_BACK = 0.62;
+/** From the take-back to contact on the real swing, then a natural follow-through. */
+const RESUME_SPEED = 2.2;
+const FOLLOW_THROUGH_SPEED = 1.05;
+
 function lerpAngle(a: number, b: number, t: number): number {
   return a + wrapAngleRad(b - a) * t;
 }
@@ -197,6 +205,9 @@ export function TennisAvatar({ role, matchStateRef }: TennisAvatarProps) {
   const serveWindupActiveRef = useRef<boolean>(false);
   const prevPhaseRef = useRef<MatchPhase>('ready');
   const splitStepElapsedRef = useRef<number>(0);
+  /** Anticipated stroke (Sportacle timing): started BEFORE contact from the ball's flight so the take-back shows and
+   * the racket meets the ball on the clip's contact frame, instead of starting when the engine launches the ball. */
+  const preSwingRef = useRef<{ clip: string; forId: number; held: boolean; resumeUntilContact: boolean } | null>(null);
   const targetColor = useMemo(() => new THREE.Color('#38bdf8'), []);
 
   useEffect(() => {
@@ -386,6 +397,46 @@ export function TennisAvatar({ role, matchStateRef }: TennisAvatarProps) {
       playClip(resolvedClip, 0.06, true, plan.timeScale, plan.startTime);
     };
 
+    // 0. Anticipate the stroke from the ball's flight (rally only).
+    const ball = state.ball;
+    const towardMe = ball && ball.active && (role === 'player' ? ball.vz > 0.5 : ball.vz < -0.5);
+    const timeToContact = towardMe ? (az - ball.z) / ball.vz : Infinity;
+    const pre = preSwingRef.current;
+    if (
+      phase === 'rally' && towardMe && !pre && !activeOneShotRef.current?.match(/hand|slice|drop/) &&
+      timeToContact > 0 && timeToContact <= ANTICIPATE_S
+    ) {
+      // Wing from where the ball will be, in the athlete's own right/left (right = (-cos yaw, sin yaw)).
+      const bx = ball.x + ball.vx * timeToContact - ax, bz = ball.z + ball.vz * timeToContact - az;
+      const forehand = bx * -Math.cos(yaw) + bz * Math.sin(yaw) >= 0;
+      const clip = forehand ? 'forehand' : 'backhand';
+      const timing = CLIP_CONTACT_TABLE[clip];
+      if (actionsRef.current[clip] && timing) {
+        // The clip's contact frame lands when the ball arrives: timeScale = contact / time to contact (bounded).
+        const scale = THREE.MathUtils.clamp(timing.contact / timeToContact, 0.85, 1.35);
+        activeOneShotRef.current = clip;
+        splitStepElapsedRef.current = 0;
+        preSwingRef.current = { clip, forId: swingId + 1, held: false, resumeUntilContact: false };
+        playClip(clip, 0.1, true, scale, 0);
+      }
+    }
+    const preNow = preSwingRef.current;
+    if (preNow) {
+      const action = actionsRef.current[preNow.clip];
+      const contact = CLIP_CONTACT_TABLE[preNow.clip]?.contact ?? 0.3;
+      if (action) {
+        // The human player's racket waits at the take-back until their real swing arrives (webcam / hardware).
+        if (role === 'player' && !preNow.held && !preNow.resumeUntilContact && action.time >= contact * TAKE_BACK) {
+          action.setEffectiveTimeScale(0); preNow.held = true;
+        }
+        if (preNow.resumeUntilContact && action.time >= contact) { action.setEffectiveTimeScale(FOLLOW_THROUGH_SPEED); preSwingRef.current = null; }
+      }
+      // The ball went past with no swing: back to ready.
+      if (preSwingRef.current && (!towardMe || timeToContact < -0.35) && !hasNewSwingTrigger && (preNow.held || !action?.isRunning())) {
+        preSwingRef.current = null; activeOneShotRef.current = null;
+      }
+    }
+
     // 1. Trigger stroke or synchronized serve windup
     if (
       role === 'opponent' &&
@@ -398,8 +449,22 @@ export function TennisAvatar({ role, matchStateRef }: TennisAvatarProps) {
       activeOneShotRef.current = 'serve';
       splitStepElapsedRef.current = 0;
       playClip('serve', 0.08, true, 1.4, 1.15);
+    } else if (hasNewSwingTrigger && preSwingRef.current && preSwingRef.current.forId === swingId && phase !== 'serving') {
+      // The engine's shot for a stroke already under way: keep it, correct the wing if needed, finish through contact.
+      lastSwingIdRef.current = swingId;
+      const p = preSwingRef.current;
+      const intended = resolveStrokeClipName(athlete);
+      const want = actionsRef.current[intended] ? intended : p.clip;
+      const contact = CLIP_CONTACT_TABLE[want]?.contact ?? 0.3;
+      const action = actionsRef.current[p.clip];
+      const at = want === p.clip && action ? action.time : contact * TAKE_BACK;
+      if (want !== p.clip || !action) { playClip(want, 0.05, true, RESUME_SPEED, Math.min(at, contact)); activeOneShotRef.current = want; }
+      else action.setEffectiveTimeScale(at < contact ? RESUME_SPEED : FOLLOW_THROUGH_SPEED);
+      if (at < contact) preSwingRef.current = { clip: want, forId: swingId, held: false, resumeUntilContact: true };
+      else preSwingRef.current = null;
     } else if (hasNewSwingTrigger) {
       lastSwingIdRef.current = swingId;
+      preSwingRef.current = null;
       if (
         serveWindupActiveRef.current &&
         athlete.animState === 'serve' &&
