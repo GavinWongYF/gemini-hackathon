@@ -1,0 +1,2519 @@
+{
+  "generated": "2026-11-21T19:30:23.575Z",
+  "method": {
+    "matches_per_arm": 200,
+    "rounds_per_match": 7,
+    "selfcheck_sims_per_brain": 60,
+    "seeds": "1..200 (same seed for both arms)",
+    "ci": "Wilson 95% for rates, normal 95% for means"
+  },
+  "results": {
+    "flank_left_always": {
+      "about": "Always goes up the left lane, uses cover, and attacks the enemy from the side.",
+      "baseline": {
+        "roundWinRate": {
+          "p": 0.9064,
+          "lo": 0.89,
+          "hi": 0.9206,
+          "n": 1400
+        },
+        "roundWinRate_rounds4to7": {
+          "p": 0.9,
+          "lo": 0.8773,
+          "hi": 0.9189,
+          "n": 800
+        },
+        "matchWinRate": {
+          "p": 1,
+          "lo": 0.9812,
+          "hi": 1,
+          "n": 200
+        },
+        "winRateByRound": [
+          {
+            "p": 0.895,
+            "lo": 0.8448,
+            "hi": 0.9303,
+            "n": 200
+          },
+          {
+            "p": 0.915,
+            "lo": 0.8681,
+            "hi": 0.9463,
+            "n": 200
+          },
+          {
+            "p": 0.935,
+            "lo": 0.892,
+            "hi": 0.9616,
+            "n": 200
+          },
+          {
+            "p": 0.9,
+            "lo": 0.8506,
+            "hi": 0.9343,
+            "n": 200
+          },
+          {
+            "p": 0.88,
+            "lo": 0.8277,
+            "hi": 0.918,
+            "n": 200
+          },
+          {
+            "p": 0.9,
+            "lo": 0.8506,
+            "hi": 0.9343,
+            "n": 200
+          },
+          {
+            "p": 0.92,
+            "lo": 0.874,
+            "hi": 0.9502,
+            "n": 200
+          }
+        ],
+        "diedInOpenByRound": [
+          {
+            "p": 0.12,
+            "lo": 0.082,
+            "hi": 0.1723,
+            "n": 200
+          },
+          {
+            "p": 0.09,
+            "lo": 0.0577,
+            "hi": 0.1378,
+            "n": 200
+          },
+          {
+            "p": 0.065,
+            "lo": 0.0384,
+            "hi": 0.108,
+            "n": 200
+          },
+          {
+            "p": 0.095,
+            "lo": 0.0617,
+            "hi": 0.1436,
+            "n": 200
+          },
+          {
+            "p": 0.12,
+            "lo": 0.082,
+            "hi": 0.1723,
+            "n": 200
+          },
+          {
+            "p": 0.1,
+            "lo": 0.0657,
+            "hi": 0.1494,
+            "n": 200
+          },
+          {
+            "p": 0.08,
+            "lo": 0.0498,
+            "hi": 0.126,
+            "n": 200
+          }
+        ],
+        "diedInOpen": {
+          "p": 0.0957,
+          "lo": 0.0814,
+          "hi": 0.1123,
+          "n": 1400
+        },
+        "diedInOpen_counterActive": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0,
+          "n": 0
+        },
+        "diedInOpen_counterInactive": {
+          "p": 0.0957,
+          "lo": 0.0814,
+          "hi": 0.1123,
+          "n": 1400
+        },
+        "counterAppearedInMatches": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0.0188,
+          "n": 200
+        },
+        "roundOfFirstCounter": null,
+        "enemyTtkSec": {
+          "mean": 29.316,
+          "lo": 27.753,
+          "hi": 30.878,
+          "n": 135
+        },
+        "playerTimeToDeathSec": {
+          "mean": 36.872,
+          "lo": 35.289,
+          "hi": 38.455,
+          "n": 135
+        },
+        "roundSeconds": {
+          "mean": 36.837,
+          "lo": 36.444,
+          "hi": 37.23,
+          "n": 1400
+        }
+      },
+      "adaptive_standin": {
+        "roundWinRate": {
+          "p": 0.6714,
+          "lo": 0.6464,
+          "hi": 0.6955,
+          "n": 1400
+        },
+        "roundWinRate_rounds4to7": {
+          "p": 0.5675,
+          "lo": 0.5329,
+          "hi": 0.6014,
+          "n": 800
+        },
+        "matchWinRate": {
+          "p": 0.845,
+          "lo": 0.7884,
+          "hi": 0.8886,
+          "n": 200
+        },
+        "winRateByRound": [
+          {
+            "p": 0.895,
+            "lo": 0.8448,
+            "hi": 0.9303,
+            "n": 200
+          },
+          {
+            "p": 0.915,
+            "lo": 0.8681,
+            "hi": 0.9463,
+            "n": 200
+          },
+          {
+            "p": 0.62,
+            "lo": 0.5511,
+            "hi": 0.6844,
+            "n": 200
+          },
+          {
+            "p": 0.545,
+            "lo": 0.4758,
+            "hi": 0.6125,
+            "n": 200
+          },
+          {
+            "p": 0.62,
+            "lo": 0.5511,
+            "hi": 0.6844,
+            "n": 200
+          },
+          {
+            "p": 0.57,
+            "lo": 0.5007,
+            "hi": 0.6367,
+            "n": 200
+          },
+          {
+            "p": 0.535,
+            "lo": 0.4659,
+            "hi": 0.6028,
+            "n": 200
+          }
+        ],
+        "diedInOpenByRound": [
+          {
+            "p": 0.12,
+            "lo": 0.082,
+            "hi": 0.1723,
+            "n": 200
+          },
+          {
+            "p": 0.09,
+            "lo": 0.0577,
+            "hi": 0.1378,
+            "n": 200
+          },
+          {
+            "p": 0.47,
+            "lo": 0.402,
+            "hi": 0.5391,
+            "n": 200
+          },
+          {
+            "p": 0.565,
+            "lo": 0.4957,
+            "hi": 0.6318,
+            "n": 200
+          },
+          {
+            "p": 0.495,
+            "lo": 0.4265,
+            "hi": 0.5637,
+            "n": 200
+          },
+          {
+            "p": 0.51,
+            "lo": 0.4412,
+            "hi": 0.5784,
+            "n": 200
+          },
+          {
+            "p": 0.575,
+            "lo": 0.5057,
+            "hi": 0.6415,
+            "n": 200
+          }
+        ],
+        "diedInOpen": {
+          "p": 0.4036,
+          "lo": 0.3782,
+          "hi": 0.4295,
+          "n": 1400
+        },
+        "diedInOpen_counterActive": {
+          "p": 0.5521,
+          "lo": 0.5202,
+          "hi": 0.5836,
+          "n": 940
+        },
+        "diedInOpen_counterInactive": {
+          "p": 0.1,
+          "lo": 0.0758,
+          "hi": 0.1308,
+          "n": 460
+        },
+        "counterAppearedInMatches": {
+          "p": 0.97,
+          "lo": 0.9361,
+          "hi": 0.9862,
+          "n": 200
+        },
+        "roundOfFirstCounter": {
+          "mean": 3.155,
+          "lo": 3.104,
+          "hi": 3.206,
+          "n": 194
+        },
+        "enemyTtkSec": {
+          "mean": 18.873,
+          "lo": 17.98,
+          "hi": 19.765,
+          "n": 590
+        },
+        "playerTimeToDeathSec": {
+          "mean": 23.768,
+          "lo": 22.613,
+          "hi": 24.924,
+          "n": 590
+        },
+        "roundSeconds": {
+          "mean": 51.033,
+          "lo": 50.146,
+          "hi": 51.92,
+          "n": 1400
+        }
+      }
+    },
+    "rush_open_mid": {
+      "about": "Sprints up the open middle to the enemy line and fights there (only crouches behind cover right where they stop).",
+      "baseline": {
+        "roundWinRate": {
+          "p": 0.2029,
+          "lo": 0.1826,
+          "hi": 0.2247,
+          "n": 1400
+        },
+        "roundWinRate_rounds4to7": {
+          "p": 0.1938,
+          "lo": 0.1679,
+          "hi": 0.2226,
+          "n": 800
+        },
+        "matchWinRate": {
+          "p": 0.03,
+          "lo": 0.0138,
+          "hi": 0.0639,
+          "n": 200
+        },
+        "winRateByRound": [
+          {
+            "p": 0.2,
+            "lo": 0.1505,
+            "hi": 0.2609,
+            "n": 200
+          },
+          {
+            "p": 0.205,
+            "lo": 0.1549,
+            "hi": 0.2663,
+            "n": 200
+          },
+          {
+            "p": 0.24,
+            "lo": 0.1861,
+            "hi": 0.3037,
+            "n": 200
+          },
+          {
+            "p": 0.235,
+            "lo": 0.1816,
+            "hi": 0.2984,
+            "n": 200
+          },
+          {
+            "p": 0.18,
+            "lo": 0.1329,
+            "hi": 0.2391,
+            "n": 200
+          },
+          {
+            "p": 0.18,
+            "lo": 0.1329,
+            "hi": 0.2391,
+            "n": 200
+          },
+          {
+            "p": 0.18,
+            "lo": 0.1329,
+            "hi": 0.2391,
+            "n": 200
+          }
+        ],
+        "diedInOpenByRound": [
+          {
+            "p": 0.98,
+            "lo": 0.9497,
+            "hi": 0.9922,
+            "n": 200
+          },
+          {
+            "p": 0.965,
+            "lo": 0.9295,
+            "hi": 0.9829,
+            "n": 200
+          },
+          {
+            "p": 0.99,
+            "lo": 0.9643,
+            "hi": 0.9973,
+            "n": 200
+          },
+          {
+            "p": 0.96,
+            "lo": 0.9231,
+            "hi": 0.9796,
+            "n": 200
+          },
+          {
+            "p": 0.975,
+            "lo": 0.9428,
+            "hi": 0.9893,
+            "n": 200
+          },
+          {
+            "p": 0.98,
+            "lo": 0.9497,
+            "hi": 0.9922,
+            "n": 200
+          },
+          {
+            "p": 0.965,
+            "lo": 0.9295,
+            "hi": 0.9829,
+            "n": 200
+          }
+        ],
+        "diedInOpen": {
+          "p": 0.9736,
+          "lo": 0.9638,
+          "hi": 0.9808,
+          "n": 1400
+        },
+        "diedInOpen_counterActive": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0,
+          "n": 0
+        },
+        "diedInOpen_counterInactive": {
+          "p": 0.9736,
+          "lo": 0.9638,
+          "hi": 0.9808,
+          "n": 1400
+        },
+        "counterAppearedInMatches": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0.0188,
+          "n": 200
+        },
+        "roundOfFirstCounter": null,
+        "enemyTtkSec": {
+          "mean": 12.617,
+          "lo": 12.39,
+          "hi": 12.844,
+          "n": 1363
+        },
+        "playerTimeToDeathSec": {
+          "mean": 15.166,
+          "lo": 14.922,
+          "hi": 15.409,
+          "n": 1363
+        },
+        "roundSeconds": {
+          "mean": 45.295,
+          "lo": 44.568,
+          "hi": 46.022,
+          "n": 1400
+        }
+      },
+      "adaptive_standin": {
+        "roundWinRate": {
+          "p": 0.4857,
+          "lo": 0.4596,
+          "hi": 0.5119,
+          "n": 1400
+        },
+        "roundWinRate_rounds4to7": {
+          "p": 0.5813,
+          "lo": 0.5468,
+          "hi": 0.615,
+          "n": 800
+        },
+        "matchWinRate": {
+          "p": 0.505,
+          "lo": 0.4363,
+          "hi": 0.5735,
+          "n": 200
+        },
+        "winRateByRound": [
+          {
+            "p": 0.2,
+            "lo": 0.1505,
+            "hi": 0.2609,
+            "n": 200
+          },
+          {
+            "p": 0.205,
+            "lo": 0.1549,
+            "hi": 0.2663,
+            "n": 200
+          },
+          {
+            "p": 0.67,
+            "lo": 0.6022,
+            "hi": 0.7314,
+            "n": 200
+          },
+          {
+            "p": 0.55,
+            "lo": 0.4808,
+            "hi": 0.6174,
+            "n": 200
+          },
+          {
+            "p": 0.6,
+            "lo": 0.5308,
+            "hi": 0.6654,
+            "n": 200
+          },
+          {
+            "p": 0.58,
+            "lo": 0.5107,
+            "hi": 0.6463,
+            "n": 200
+          },
+          {
+            "p": 0.595,
+            "lo": 0.5258,
+            "hi": 0.6606,
+            "n": 200
+          }
+        ],
+        "diedInOpenByRound": [
+          {
+            "p": 0.98,
+            "lo": 0.9497,
+            "hi": 0.9922,
+            "n": 200
+          },
+          {
+            "p": 0.965,
+            "lo": 0.9295,
+            "hi": 0.9829,
+            "n": 200
+          },
+          {
+            "p": 0.145,
+            "lo": 0.1029,
+            "hi": 0.2005,
+            "n": 200
+          },
+          {
+            "p": 0.02,
+            "lo": 0.0078,
+            "hi": 0.0503,
+            "n": 200
+          },
+          {
+            "p": 0,
+            "lo": 0,
+            "hi": 0.0188,
+            "n": 200
+          },
+          {
+            "p": 0,
+            "lo": 0,
+            "hi": 0.0188,
+            "n": 200
+          },
+          {
+            "p": 0,
+            "lo": 0,
+            "hi": 0.0188,
+            "n": 200
+          }
+        ],
+        "diedInOpen": {
+          "p": 0.3014,
+          "lo": 0.278,
+          "hi": 0.326,
+          "n": 1400
+        },
+        "diedInOpen_counterActive": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0.004,
+          "n": 967
+        },
+        "diedInOpen_counterInactive": {
+          "p": 0.9746,
+          "lo": 0.9551,
+          "hi": 0.9858,
+          "n": 433
+        },
+        "counterAppearedInMatches": {
+          "p": 1,
+          "lo": 0.9812,
+          "hi": 1,
+          "n": 200
+        },
+        "roundOfFirstCounter": {
+          "mean": 3.165,
+          "lo": 3.106,
+          "hi": 3.224,
+          "n": 200
+        },
+        "enemyTtkSec": {
+          "mean": 17.422,
+          "lo": 16.989,
+          "hi": 17.855,
+          "n": 1045
+        },
+        "playerTimeToDeathSec": {
+          "mean": 19.936,
+          "lo": 19.49,
+          "hi": 20.382,
+          "n": 1045
+        },
+        "roundSeconds": {
+          "mean": 44.385,
+          "lo": 43.644,
+          "hi": 45.126,
+          "n": 1400
+        }
+      }
+    },
+    "mixed_random": {
+      "about": "Random lane each round; uses cover half the time; rushes 30% of the time.",
+      "baseline": {
+        "roundWinRate": {
+          "p": 0.7293,
+          "lo": 0.7054,
+          "hi": 0.7519,
+          "n": 1400
+        },
+        "roundWinRate_rounds4to7": {
+          "p": 0.7225,
+          "lo": 0.6905,
+          "hi": 0.7524,
+          "n": 800
+        },
+        "matchWinRate": {
+          "p": 0.87,
+          "lo": 0.8163,
+          "hi": 0.9097,
+          "n": 200
+        },
+        "winRateByRound": [
+          {
+            "p": 0.755,
+            "lo": 0.691,
+            "hi": 0.8094,
+            "n": 200
+          },
+          {
+            "p": 0.71,
+            "lo": 0.6436,
+            "hi": 0.7685,
+            "n": 200
+          },
+          {
+            "p": 0.75,
+            "lo": 0.6857,
+            "hi": 0.8049,
+            "n": 200
+          },
+          {
+            "p": 0.7,
+            "lo": 0.6332,
+            "hi": 0.7593,
+            "n": 200
+          },
+          {
+            "p": 0.705,
+            "lo": 0.6384,
+            "hi": 0.7639,
+            "n": 200
+          },
+          {
+            "p": 0.73,
+            "lo": 0.6646,
+            "hi": 0.7868,
+            "n": 200
+          },
+          {
+            "p": 0.755,
+            "lo": 0.691,
+            "hi": 0.8094,
+            "n": 200
+          }
+        ],
+        "diedInOpenByRound": [
+          {
+            "p": 0.24,
+            "lo": 0.1861,
+            "hi": 0.3037,
+            "n": 200
+          },
+          {
+            "p": 0.28,
+            "lo": 0.2224,
+            "hi": 0.3459,
+            "n": 200
+          },
+          {
+            "p": 0.265,
+            "lo": 0.2087,
+            "hi": 0.3302,
+            "n": 200
+          },
+          {
+            "p": 0.29,
+            "lo": 0.2315,
+            "hi": 0.3564,
+            "n": 200
+          },
+          {
+            "p": 0.29,
+            "lo": 0.2315,
+            "hi": 0.3564,
+            "n": 200
+          },
+          {
+            "p": 0.26,
+            "lo": 0.2041,
+            "hi": 0.3249,
+            "n": 200
+          },
+          {
+            "p": 0.21,
+            "lo": 0.1593,
+            "hi": 0.2716,
+            "n": 200
+          }
+        ],
+        "diedInOpen": {
+          "p": 0.2621,
+          "lo": 0.2398,
+          "hi": 0.2858,
+          "n": 1400
+        },
+        "diedInOpen_counterActive": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0,
+          "n": 0
+        },
+        "diedInOpen_counterInactive": {
+          "p": 0.2621,
+          "lo": 0.2398,
+          "hi": 0.2858,
+          "n": 1400
+        },
+        "counterAppearedInMatches": {
+          "p": 0,
+          "lo": 0,
+          "hi": 0.0188,
+          "n": 200
+        },
+        "roundOfFirstCounter": null,
+        "enemyTtkSec": {
+          "mean": 25.605,
+          "lo": 24.088,
+          "hi": 27.122,
+          "n": 403
+        },
+        "playerTimeToDeathSec": {
+          "mean": 29.72,
+          "lo": 28.22,
+          "hi": 31.219,
+          "n": 403
+        },
+        "roundSeconds": {
+          "mean": 39.755,
+          "lo": 39.23,
+          "hi": 40.28,
+          "n": 1400
+        }
+      },
+      "adaptive_standin": {
+        "roundWinRate": {
+          "p": 0.6407,
+          "lo": 0.6152,
+          "hi": 0.6654,
+          "n": 1400
+        },
+        "roundWinRate_rounds4to7": {
+          "p": 0.5713,
+          "lo": 0.5367,
+          "hi": 0.6051,
+          "n": 800
+        },
+        "matchWinRate": {
+          "p": 0.77,
+          "lo": 0.7069,
+          "hi": 0.8229,
+          "n": 200
+        },
+        "winRateByRound": [
+          {
+            "p": 0.755,
+            "lo": 0.691,
+            "hi": 0.8094,
+            "n": 200
+          },
+          {
+            "p": 0.71,
+            "lo": 0.6436,
+            "hi": 0.7685,
+            "n": 200
+          },
+          {
+            "p": 0.735,
+            "lo": 0.6698,
+            "hi": 0.7913,
+            "n": 200
+          },
+          {
+            "p": 0.615,
+            "lo": 0.546,
+            "hi": 0.6797,
+            "n": 200
+          },
+          {
+            "p": 0.59,
+            "lo": 0.5208,
+            "hi": 0.6558,
+            "n": 200
+          },
+          {
+            "p": 0.575,
+            "lo": 0.5057,
+            "hi": 0.6415,
+            "n": 200
+          },
+          {
+            "p": 0.505,
+            "lo": 0.4363,
+            "hi": 0.5735,
+            "n": 200
+          }
+        ],
+        "diedInOpenByRound": [
+          {
+            "p": 0.24,
+            "lo": 0.1861,
+            "hi": 0.3037,
+            "n": 200
+          },
+          {
+            "p": 0.28,
+            "lo": 0.2224,
+            "hi": 0.3459,
+            "n": 200
+          },
+          {
+            "p": 0.27,
+            "lo": 0.2132,
+            "hi": 0.3354,
+            "n": 200
+          },
+          {
+            "p": 0.29,
+            "lo": 0.2315,
+            "hi": 0.3564,
+            "n": 200
+          },
+          {
+            "p": 0.265,
+            "lo": 0.2087,
+            "hi": 0.3302,
+            "n": 200
+          },
+          {
+            "p": 0.26,
+            "lo": 0.2041,
+            "hi": 0.3249,
+            "n": 200
+          },
+          {
+            "p": 0.25,
+            "lo": 0.1951,
+            "hi": 0.3143,
+            "n": 200
+          }
+        ],
+        "diedInOpen": {
+          "p": 0.265,
+          "lo": 0.2425,
+          "hi": 0.2887,
+          "n": 1400
+        },
+        "diedInOpen_counterActive": {
+          "p": 0.2343,
+          "lo": 0.2023,
+          "hi": 0.2697,
+          "n": 606
+        },
+        "diedInOpen_counterInactive": {
+          "p": 0.2884,
+          "lo": 0.258,
+          "hi": 0.3209,
+          "n": 794
+        },
+        "counterAppearedInMatches": {
+          "p": 0.895,
+          "lo": 0.8448,
+          "hi": 0.9303,
+          "n": 200
+        },
+        "roundOfFirstCounter": {
+          "mean": 4.615,
+          "lo": 4.435,
+          "hi": 4.794,
+          "n": 179
+        },
+        "enemyTtkSec": {
+          "mean": 22.948,
+          "lo": 21.841,
+          "hi": 24.056,
+          "n": 556
+        },
+        "playerTimeToDeathSec": {
+          "mean": 30.283,
+          "lo": 28.993,
+          "hi": 31.573,
+          "n": 556
+        },
+        "roundSeconds": {
+          "mean": 44.09,
+          "lo": 43.368,
+          "hi": 44.813,
+          "n": 1400
+        }
+      }
+    }
+  },
+  "live_gemini": {
+    "skipped": true,
+    "reason": "run with --live to try ws://localhost:8000/ws"
+  },
+  "selfcheck": {
+    "candidates_checked": 4489,
+    "rejected": 2530,
+    "by_stage": {
+      "structure": 946,
+      "fairness": 1584
+    },
+    "reason_counts": {
+      "predicted player win-rate N% is outside the N%–N% fairness band (…)": 463,
+      "cover: left_wall_mid would block the left lane (…)": 431,
+      "cover: left_crate_mid would block the left lane (…)": 431,
+      "worse at countering the habit than the current behaviour: predicted player win-rate N% vs N% now (…)": 1121,
+      "cover: mid_wall_front overlaps a permanent block at (…)": 515,
+      "cover: mid_wall_front would block the mid lane (…)": 515
+    },
+    "injected_faults": [
+      {
+        "fault": "invented option",
+        "injected": true,
+        "reasons": [
+          "unknown option \"red.position.snipe_from_roof\""
+        ]
+      },
+      {
+        "fault": "invented fact in a rule",
+        "injected": true,
+        "reasons": [
+          "rule uses unknown fact \"player_health\""
+        ]
+      },
+      {
+        "fault": "superhuman accuracy",
+        "injected": true,
+        "reasons": [
+          "settings.enemy_accuracy = 0.95 is outside 0.15–0.7"
+        ]
+      },
+      {
+        "fault": "cover on the blue spawn",
+        "injected": true,
+        "reasons": [
+          "cover: \"blue_spawn_crate\" is not one of the allowed spots"
+        ]
+      },
+      {
+        "fault": "walls blocking the middle",
+        "injected": true,
+        "reasons": [
+          "cover: mid_wall_front overlaps a permanent block at (12, -18.2)",
+          "cover: mid_wall_front would block the mid lane (6.0 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+        ]
+      },
+      {
+        "fault": "too much cover",
+        "injected": true,
+        "reasons": [
+          "cover: 5 objects, at most 4 allowed"
+        ]
+      },
+      {
+        "fault": "five rules",
+        "injected": true,
+        "reasons": [
+          "red: 5 rules, at most 4"
+        ]
+      }
+    ]
+  },
+  "examples": {
+    "flank_left_always": {
+      "seed": 1,
+      "rounds": [
+        {
+          "round": 1,
+          "winner": "blue",
+          "player_lane": "left",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 1,
+          "cover": []
+        },
+        {
+          "round": 2,
+          "winner": "blue",
+          "player_lane": "left",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 1,
+          "cover": []
+        },
+        {
+          "round": 3,
+          "winner": "red",
+          "player_lane": "left",
+          "died_in_open": true,
+          "red_positions": [
+            "watch_left_flank",
+            "watch_left_flank",
+            "watch_left_flank"
+          ],
+          "behaviour_version": 2,
+          "cover": []
+        },
+        {
+          "round": 4,
+          "winner": "blue",
+          "player_lane": "left",
+          "died_in_open": true,
+          "red_positions": [
+            "watch_left_flank",
+            "watch_left_flank",
+            "watch_left_flank"
+          ],
+          "behaviour_version": 3,
+          "cover": []
+        },
+        {
+          "round": 5,
+          "winner": "red",
+          "player_lane": "left",
+          "died_in_open": true,
+          "red_positions": [
+            "watch_left_flank",
+            "watch_left_flank",
+            "watch_left_flank"
+          ],
+          "behaviour_version": 3,
+          "cover": []
+        },
+        {
+          "round": 6,
+          "winner": "red",
+          "player_lane": "left",
+          "died_in_open": true,
+          "red_positions": [
+            "watch_left_flank",
+            "watch_left_flank",
+            "watch_left_flank"
+          ],
+          "behaviour_version": 4,
+          "cover": [
+            "left_crate_far",
+            "left_crate_mid"
+          ]
+        },
+        {
+          "round": 7,
+          "winner": "red",
+          "player_lane": "left",
+          "died_in_open": true,
+          "red_positions": [
+            "watch_left_flank",
+            "watch_left_flank",
+            "watch_left_flank"
+          ],
+          "behaviour_version": 4,
+          "cover": [
+            "left_crate_far",
+            "left_crate_mid"
+          ]
+        }
+      ],
+      "accepted_updates": [
+        {
+          "afterRound": 2,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_flank_left_always_1",
+            "version": 2,
+            "source": "quick",
+            "observations": [
+              "Won 2 of the last 2 rounds by going up the left."
+            ],
+            "plan": [
+              "All three enemies watch the left flank."
+            ],
+            "changes": [
+              {
+                "where": "red.rules",
+                "from": null,
+                "to": "If enemy_index in [0,1,2], position = watch_left_flank.",
+                "why": "Won 2 of the last 2 rounds via the left flank."
+              },
+              {
+                "where": "red.position.watch_left_flank",
+                "from": {
+                  "base": 0
+                },
+                "to": {
+                  "base": 0,
+                  "when": {
+                    "flanks_left": 1
+                  }
+                },
+                "why": "Won 2 of the last 2 rounds via the left flank."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.4,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": []
+            },
+            "behaviour": {
+              "version": 2,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0,
+                        "when": {
+                          "flanks_left": 1
+                        }
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": [
+                    {
+                      "if": [
+                        {
+                          "fact": "enemy_index",
+                          "in": [
+                            0,
+                            1,
+                            2
+                          ]
+                        }
+                      ],
+                      "do": {
+                        "position": "watch_left_flank"
+                      },
+                      "why": "Won 2 of the last 2 rounds via the left flank."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "label": "strong: all three watch left"
+        },
+        {
+          "afterRound": 3,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_flank_left_always_1",
+            "version": 3,
+            "source": "quick",
+            "observations": [
+              "Won 2 of the last 3 rounds by going up the left."
+            ],
+            "plan": [
+              "Two enemies watch the left flank."
+            ],
+            "changes": [
+              {
+                "where": "red.rules",
+                "from": "If enemy_index in [0,1,2], position = watch_left_flank.",
+                "to": "If enemy_index in [0,1], position = watch_left_flank.",
+                "why": "Won 2 of the last 3 rounds via the left flank."
+              },
+              {
+                "where": "red.position.watch_left_flank",
+                "from": {
+                  "base": 0,
+                  "when": {
+                    "flanks_left": 1
+                  }
+                },
+                "to": {
+                  "base": 0,
+                  "when": {
+                    "flanks_left": 1
+                  }
+                },
+                "why": "Won 2 of the last 3 rounds via the left flank."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.4,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": []
+            },
+            "behaviour": {
+              "version": 3,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0,
+                        "when": {
+                          "flanks_left": 1
+                        }
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": [
+                    {
+                      "if": [
+                        {
+                          "fact": "enemy_index",
+                          "in": [
+                            0,
+                            1
+                          ]
+                        }
+                      ],
+                      "do": {
+                        "position": "watch_left_flank"
+                      },
+                      "why": "Won 2 of the last 3 rounds via the left flank."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "label": "medium: two watch left"
+        },
+        {
+          "afterRound": 5,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_flank_left_always_1",
+            "version": 4,
+            "source": "quick",
+            "observations": [
+              "Died in open ground 3 of the last 3 rounds, mostly in the left."
+            ],
+            "plan": [
+              "Add 2 crates/trees in the left."
+            ],
+            "changes": [
+              {
+                "where": "settings.cover",
+                "from": [],
+                "to": [
+                  "left_crate_far",
+                  "left_crate_mid"
+                ],
+                "why": "3 of the last 3 deaths were in the open in the left."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.4,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": [
+                "left_crate_far",
+                "left_crate_mid"
+              ]
+            },
+            "behaviour": {
+              "version": 4,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0,
+                        "when": {
+                          "flanks_left": 1
+                        }
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": [
+                    {
+                      "if": [
+                        {
+                          "fact": "enemy_index",
+                          "in": [
+                            0,
+                            1
+                          ]
+                        }
+                      ],
+                      "do": {
+                        "position": "watch_left_flank"
+                      },
+                      "why": "Won 2 of the last 3 rounds via the left flank."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "label": "medium: cover left_crate_far+left_crate_mid"
+        }
+      ],
+      "self_check": [
+        {
+          "round": 2,
+          "version": 2,
+          "source": "quick",
+          "label": "strong: all three watch left",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.6166666666666667,
+          "pCurrent": 0.8833333333333333,
+          "ms": 160.6721
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "strong: all three watch left",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "predicted player win-rate 77% is outside the 35%–65% fairness band (now 77%)"
+          ],
+          "pCandidate": 0.7666666666666667,
+          "pCurrent": 0.7666666666666667,
+          "ms": 173.8295
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "medium: two watch left",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.5333333333333333,
+          "pCurrent": 0.7666666666666667,
+          "ms": 164.83929999999998
+        },
+        {
+          "round": 4,
+          "version": 4,
+          "source": "quick",
+          "label": "strong: all three watch left & cover left_crate_far+left_wall_mid+left_crate_mid",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: left_wall_mid would block the left lane (4.2 m of cover at z≈-19 leaves < 1.5 m to walk through)",
+            "cover: left_crate_mid would block the left lane (4.2 m of cover at z≈-18.5 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.14670000000000982
+        },
+        {
+          "round": 4,
+          "version": 4,
+          "source": "quick",
+          "label": "medium: two watch left & cover left_crate_far+left_crate_mid",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 45% vs 50% now (target 50%)"
+          ],
+          "pCandidate": 0.45,
+          "pCurrent": 0.5,
+          "ms": 185.40699999999993
+        },
+        {
+          "round": 4,
+          "version": 4,
+          "source": "quick",
+          "label": "mild: one watches left & cover left_crate_far + accuracy +0.05",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 33% vs 50% now (target 50%)"
+          ],
+          "pCandidate": 0.3333333333333333,
+          "pCurrent": 0.5,
+          "ms": 138.12299999999993
+        },
+        {
+          "round": 5,
+          "version": 4,
+          "source": "quick",
+          "label": "strong: cover left_crate_far+left_wall_mid+left_crate_mid",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: left_wall_mid would block the left lane (4.2 m of cover at z≈-19 leaves < 1.5 m to walk through)",
+            "cover: left_crate_mid would block the left lane (4.2 m of cover at z≈-18.5 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.050900000000183354
+        },
+        {
+          "round": 5,
+          "version": 4,
+          "source": "quick",
+          "label": "medium: cover left_crate_far+left_crate_mid",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.5166666666666667,
+          "pCurrent": 0.5666666666666667,
+          "ms": 151.53449999999998
+        },
+        {
+          "round": 6,
+          "version": 5,
+          "source": "quick",
+          "label": "strong: cover left_wall_mid+left_tree_near",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: left_crate_mid would block the left lane (4.2 m of cover at z≈-18.5 leaves < 1.5 m to walk through)",
+            "cover: left_wall_mid would block the left lane (4.2 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.04909999999995307
+        },
+        {
+          "round": 6,
+          "version": 5,
+          "source": "quick",
+          "label": "medium: cover left_tree_near",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 77% vs 52% now (target 50%)"
+          ],
+          "pCandidate": 0.7666666666666667,
+          "pCurrent": 0.5166666666666667,
+          "ms": 141.5236
+        },
+        {
+          "round": 6,
+          "version": 5,
+          "source": "quick",
+          "label": "mild: cover left_tree_near + accuracy +0.05",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 73% vs 52% now (target 50%)"
+          ],
+          "pCandidate": 0.7333333333333333,
+          "pCurrent": 0.5166666666666667,
+          "ms": 147.2199999999998
+        },
+        {
+          "round": 7,
+          "version": 5,
+          "source": "quick",
+          "label": "strong: cover left_wall_mid+left_tree_near",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: left_crate_mid would block the left lane (4.2 m of cover at z≈-18.5 leaves < 1.5 m to walk through)",
+            "cover: left_wall_mid would block the left lane (4.2 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.05279999999993379
+        },
+        {
+          "round": 7,
+          "version": 5,
+          "source": "quick",
+          "label": "medium: cover left_tree_near",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 80% vs 52% now (target 50%)"
+          ],
+          "pCandidate": 0.8,
+          "pCurrent": 0.5166666666666667,
+          "ms": 143.08740000000012
+        },
+        {
+          "round": 7,
+          "version": 5,
+          "source": "quick",
+          "label": "mild: cover left_tree_near + accuracy +0.05",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 75% vs 52% now (target 50%)"
+          ],
+          "pCandidate": 0.75,
+          "pCurrent": 0.5166666666666667,
+          "ms": 138.88519999999994
+        }
+      ]
+    },
+    "rush_open_mid": {
+      "seed": 1,
+      "rounds": [
+        {
+          "round": 1,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": true,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 1,
+          "cover": []
+        },
+        {
+          "round": 2,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": true,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 1,
+          "cover": []
+        },
+        {
+          "round": 3,
+          "winner": "blue",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 2,
+          "cover": [
+            "mid_crate_front"
+          ]
+        },
+        {
+          "round": 4,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center"
+          ]
+        },
+        {
+          "round": 5,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center"
+          ]
+        },
+        {
+          "round": 6,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center"
+          ]
+        },
+        {
+          "round": 7,
+          "winner": "blue",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center"
+          ]
+        }
+      ],
+      "accepted_updates": [
+        {
+          "afterRound": 2,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_rush_open_mid_1",
+            "version": 2,
+            "source": "quick",
+            "observations": [
+              "Died in open ground 2 of the last 2 rounds, mostly in the middle."
+            ],
+            "plan": [
+              "Add one crate in the middle; enemies aim a little better to keep it close."
+            ],
+            "changes": [
+              {
+                "where": "settings.cover",
+                "from": [],
+                "to": [
+                  "mid_crate_front"
+                ],
+                "why": "2 of the last 2 deaths were in the open in the middle."
+              },
+              {
+                "where": "settings.enemy_accuracy",
+                "from": 0.4,
+                "to": 0.45,
+                "why": "2 of the last 2 deaths were in the open in the middle."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.45,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": [
+                "mid_crate_front"
+              ]
+            },
+            "behaviour": {
+              "version": 2,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": []
+                }
+              }
+            }
+          },
+          "label": "mild: cover mid_crate_front + accuracy +0.05"
+        },
+        {
+          "afterRound": 3,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_rush_open_mid_1",
+            "version": 3,
+            "source": "quick",
+            "observations": [
+              "Died in open ground 2 of the last 3 rounds, mostly in the middle."
+            ],
+            "plan": [
+              "Add one crate in the middle; enemies aim a little better to keep it close."
+            ],
+            "changes": [
+              {
+                "where": "settings.cover",
+                "from": [
+                  "mid_crate_front"
+                ],
+                "to": [
+                  "mid_crate_front",
+                  "mid_tree_center"
+                ],
+                "why": "2 of the last 3 deaths were in the open in the middle."
+              },
+              {
+                "where": "settings.enemy_accuracy",
+                "from": 0.45,
+                "to": 0.5,
+                "why": "2 of the last 3 deaths were in the open in the middle."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.5,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": [
+                "mid_crate_front",
+                "mid_tree_center"
+              ]
+            },
+            "behaviour": {
+              "version": 3,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": []
+                }
+              }
+            }
+          },
+          "label": "mild: cover mid_tree_center + accuracy +0.05"
+        }
+      ],
+      "self_check": [
+        {
+          "round": 2,
+          "version": 2,
+          "source": "quick",
+          "label": "strong: cover mid_crate_front+mid_wall_front+mid_tree_center",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: mid_wall_front overlaps a permanent block at (12, -18.2)",
+            "cover: mid_wall_front would block the mid lane (6.0 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.08539999998174608
+        },
+        {
+          "round": 2,
+          "version": 2,
+          "source": "quick",
+          "label": "medium: cover mid_crate_front+mid_tree_center",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "predicted player win-rate 82% is outside the 35%–65% fairness band (now 18%)"
+          ],
+          "pCandidate": 0.8166666666666667,
+          "pCurrent": 0.18333333333333332,
+          "ms": 132.77100000000792
+        },
+        {
+          "round": 2,
+          "version": 2,
+          "source": "quick",
+          "label": "mild: cover mid_crate_front + accuracy +0.05",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.6,
+          "pCurrent": 0.18333333333333332,
+          "ms": 122.83899999997811
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "strong: cover mid_wall_front+mid_tree_center+mid_crate_near",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: mid_wall_front overlaps a permanent block at (12, -18.2)",
+            "cover: mid_wall_front would block the mid lane (6.0 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.038099999947007746
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "medium: cover mid_tree_center+mid_crate_near",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "worse at countering the habit than the current behaviour: predicted player win-rate 67% vs 63% now (target 50%)"
+          ],
+          "pCandidate": 0.6666666666666666,
+          "pCurrent": 0.6333333333333333,
+          "ms": 118.76880000001984
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "mild: cover mid_tree_center + accuracy +0.05",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.5333333333333333,
+          "pCurrent": 0.6333333333333333,
+          "ms": 115.04860000003828
+        },
+        {
+          "round": 6,
+          "version": 4,
+          "source": "quick",
+          "label": "mild: reaction +0.15 s",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "predicted player win-rate 33% is outside the 35%–65% fairness band (now 30%)"
+          ],
+          "pCandidate": 0.3333333333333333,
+          "pCurrent": 0.3,
+          "ms": 122.16330000001471
+        }
+      ]
+    },
+    "mixed_random": {
+      "seed": 1,
+      "rounds": [
+        {
+          "round": 1,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": true,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 1,
+          "cover": []
+        },
+        {
+          "round": 2,
+          "winner": "red",
+          "player_lane": "right",
+          "died_in_open": true,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 1,
+          "cover": []
+        },
+        {
+          "round": 3,
+          "winner": "blue",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 2,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center"
+          ]
+        },
+        {
+          "round": 4,
+          "winner": "blue",
+          "player_lane": "mid",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center",
+            "mid_crate_near"
+          ]
+        },
+        {
+          "round": 5,
+          "winner": "red",
+          "player_lane": "mid",
+          "died_in_open": true,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center",
+            "mid_crate_near"
+          ]
+        },
+        {
+          "round": 6,
+          "winner": "blue",
+          "player_lane": "left",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center",
+            "mid_crate_near"
+          ]
+        },
+        {
+          "round": 7,
+          "winner": "blue",
+          "player_lane": "left",
+          "died_in_open": false,
+          "red_positions": [
+            "hold_mid",
+            "hold_mid",
+            "hold_mid"
+          ],
+          "behaviour_version": 3,
+          "cover": [
+            "mid_crate_front",
+            "mid_tree_center",
+            "mid_crate_near"
+          ]
+        }
+      ],
+      "accepted_updates": [
+        {
+          "afterRound": 2,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_mixed_random_1",
+            "version": 2,
+            "source": "quick",
+            "observations": [
+              "Died in open ground 2 of the last 2 rounds, mostly in the middle."
+            ],
+            "plan": [
+              "Add 2 crates/trees in the middle."
+            ],
+            "changes": [
+              {
+                "where": "settings.cover",
+                "from": [],
+                "to": [
+                  "mid_crate_front",
+                  "mid_tree_center"
+                ],
+                "why": "2 of the last 2 deaths were in the open in the middle."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.4,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": [
+                "mid_crate_front",
+                "mid_tree_center"
+              ]
+            },
+            "behaviour": {
+              "version": 2,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": []
+                }
+              }
+            }
+          },
+          "label": "medium: cover mid_crate_front+mid_tree_center"
+        },
+        {
+          "afterRound": 3,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_mixed_random_1",
+            "version": 3,
+            "source": "quick",
+            "observations": [
+              "Died in open ground 2 of the last 3 rounds, mostly in the middle."
+            ],
+            "plan": [
+              "Add one crate in the middle; enemies aim a little better to keep it close."
+            ],
+            "changes": [
+              {
+                "where": "settings.cover",
+                "from": [
+                  "mid_crate_front",
+                  "mid_tree_center"
+                ],
+                "to": [
+                  "mid_crate_front",
+                  "mid_tree_center",
+                  "mid_crate_near"
+                ],
+                "why": "2 of the last 3 deaths were in the open in the middle."
+              },
+              {
+                "where": "settings.enemy_accuracy",
+                "from": 0.4,
+                "to": 0.45,
+                "why": "2 of the last 3 deaths were in the open in the middle."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.45,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": [
+                "mid_crate_front",
+                "mid_tree_center",
+                "mid_crate_near"
+              ]
+            },
+            "behaviour": {
+              "version": 3,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": []
+                }
+              }
+            }
+          },
+          "label": "mild: cover mid_crate_near + accuracy +0.05"
+        },
+        {
+          "afterRound": 7,
+          "update": {
+            "type": "strategy_update",
+            "match_id": "practice_mixed_random_1",
+            "version": 4,
+            "source": "quick",
+            "observations": [
+              "Won 2 of the last 3 rounds by going up the left."
+            ],
+            "plan": [
+              "All three enemies watch the left flank."
+            ],
+            "changes": [
+              {
+                "where": "red.rules",
+                "from": null,
+                "to": "If enemy_index in [0,1,2], position = watch_left_flank.",
+                "why": "Won 2 of the last 3 rounds via the left flank."
+              },
+              {
+                "where": "red.position.watch_left_flank",
+                "from": {
+                  "base": 0
+                },
+                "to": {
+                  "base": 0,
+                  "when": {
+                    "flanks_left": 1
+                  }
+                },
+                "why": "Won 2 of the last 3 rounds via the left flank."
+              }
+            ],
+            "settings": {
+              "enemy_accuracy": 0.45,
+              "enemy_reaction_sec": 1,
+              "enemy_damage": 10,
+              "cover": [
+                "mid_crate_front",
+                "mid_tree_center",
+                "mid_crate_near"
+              ]
+            },
+            "behaviour": {
+              "version": 4,
+              "npcs": {
+                "red": {
+                  "decisions": {
+                    "position": {
+                      "hold_mid": {
+                        "base": 1
+                      },
+                      "watch_left_flank": {
+                        "base": 0,
+                        "when": {
+                          "flanks_left": 1
+                        }
+                      },
+                      "watch_right_flank": {
+                        "base": 0
+                      },
+                      "push_forward": {
+                        "base": 0
+                      },
+                      "hold_cover": {
+                        "base": 0
+                      }
+                    },
+                    "target": {
+                      "nearest": {
+                        "base": 1
+                      },
+                      "player_first": {
+                        "base": 0
+                      },
+                      "weakest": {
+                        "base": 0
+                      }
+                    },
+                    "style": {
+                      "stand_and_shoot": {
+                        "base": 0
+                      },
+                      "strafe_and_shoot": {
+                        "base": 1
+                      },
+                      "retreat_to_cover": {
+                        "base": 0
+                      }
+                    }
+                  },
+                  "rules": [
+                    {
+                      "if": [
+                        {
+                          "fact": "enemy_index",
+                          "in": [
+                            0,
+                            1,
+                            2
+                          ]
+                        }
+                      ],
+                      "do": {
+                        "position": "watch_left_flank"
+                      },
+                      "why": "Won 2 of the last 3 rounds via the left flank."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "label": "strong: all three watch left"
+        }
+      ],
+      "self_check": [
+        {
+          "round": 2,
+          "version": 2,
+          "source": "quick",
+          "label": "strong: cover mid_crate_front+mid_wall_front+mid_tree_center",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: mid_wall_front overlaps a permanent block at (12, -18.2)",
+            "cover: mid_wall_front would block the mid lane (6.0 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.022800000035203993
+        },
+        {
+          "round": 2,
+          "version": 2,
+          "source": "quick",
+          "label": "medium: cover mid_crate_front+mid_tree_center",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.45,
+          "pCurrent": 0.31666666666666665,
+          "ms": 111.62340000004042
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "strong: cover mid_wall_front+mid_crate_near",
+          "accepted": false,
+          "stage": "structure",
+          "reasons": [
+            "cover: mid_wall_front overlaps a permanent block at (12, -18.2)",
+            "cover: mid_wall_front would block the mid lane (6.0 m of cover at z≈-19 leaves < 1.5 m to walk through)"
+          ],
+          "ms": 0.029799999902024865
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "medium: cover mid_crate_near",
+          "accepted": false,
+          "stage": "fairness",
+          "reasons": [
+            "predicted player win-rate 68% is outside the 35%–65% fairness band (now 73%)"
+          ],
+          "pCandidate": 0.6833333333333333,
+          "pCurrent": 0.7333333333333333,
+          "ms": 133.921800000011
+        },
+        {
+          "round": 3,
+          "version": 3,
+          "source": "quick",
+          "label": "mild: cover mid_crate_near + accuracy +0.05",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.6166666666666667,
+          "pCurrent": 0.7333333333333333,
+          "ms": 147.7895000000717
+        },
+        {
+          "round": 7,
+          "version": 4,
+          "source": "quick",
+          "label": "strong: all three watch left",
+          "accepted": true,
+          "stage": "ok",
+          "reasons": [],
+          "pCandidate": 0.4666666666666667,
+          "pCurrent": 0.7,
+          "ms": 134.50419999996666
+        }
+      ]
+    }
+  },
+  "runtime_sec": 798.145
+}

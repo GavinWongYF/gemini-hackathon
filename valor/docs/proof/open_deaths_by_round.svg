@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 300" width="920" height="300" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="11">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="12" y="20" font-size="14" font-weight="600" fill="#1d2330">Deaths in the open by round: baseline vs adaptive (95% CI)</text>
+<text x="56" y="50" font-size="12" font-weight="600" fill="#1d2330">flank_left_always</text>
+<line x1="56" x2="298" y1="216" y2="216" stroke="#e3e6eb"/>
+<text x="50" y="220" text-anchor="end" fill="#5b6270">0%</text>
+<line x1="56" x2="298" y1="177" y2="177" stroke="#e3e6eb"/>
+<text x="50" y="181" text-anchor="end" fill="#5b6270">25%</text>
+<line x1="56" x2="298" y1="138" y2="138" stroke="#e3e6eb"/>
+<text x="50" y="142" text-anchor="end" fill="#5b6270">50%</text>
+<line x1="56" x2="298" y1="99" y2="99" stroke="#e3e6eb"/>
+<text x="50" y="103" text-anchor="end" fill="#5b6270">75%</text>
+<line x1="56" x2="298" y1="60" y2="60" stroke="#e3e6eb"/>
+<text x="50" y="64" text-anchor="end" fill="#5b6270">100%</text>
+<line x1="56" x2="298" y1="138" y2="138" stroke="#9aa1ad" stroke-dasharray="4 3"/>
+<text x="56" y="232" text-anchor="middle" fill="#5b6270">1</text>
+<text x="96.33333333333334" y="232" text-anchor="middle" fill="#5b6270">2</text>
+<text x="136.66666666666669" y="232" text-anchor="middle" fill="#5b6270">3</text>
+<text x="177" y="232" text-anchor="middle" fill="#5b6270">4</text>
+<text x="217.33333333333334" y="232" text-anchor="middle" fill="#5b6270">5</text>
+<text x="257.66666666666663" y="232" text-anchor="middle" fill="#5b6270">6</text>
+<text x="298" y="232" text-anchor="middle" fill="#5b6270">7</text>
+<text x="177" y="246" text-anchor="middle" fill="#5b6270">round</text>
+<text transform="translate(20,138) rotate(-90)" text-anchor="middle" fill="#5b6270">rounds the player died in the open</text>
+<polygon points="56,189.1212 96.33333333333334,194.5032 136.66666666666669,199.152 177,193.5984 217.33333333333334,189.1212 257.66666666666663,192.6936 298,196.344 298,208.2312 257.66666666666663,205.7508 217.33333333333334,203.208 177,206.3748 136.66666666666669,210.0096 96.33333333333334,206.9988 56,203.208" fill="#8a8f98" opacity="0.15"/>
+<polyline points="56,197.28 96.33333333333334,201.96 136.66666666666669,205.86 177,201.18 217.33333333333334,197.28 257.66666666666663,200.4 298,203.52" fill="none" stroke="#8a8f98" stroke-width="2.2"/>
+<circle cx="56" cy="197.28" r="3" fill="#8a8f98"><title>baseline round 1: 12.0% [8.2-17.2]</title></circle>
+<circle cx="96.33333333333334" cy="201.96" r="3" fill="#8a8f98"><title>baseline round 2: 9.0% [5.8-13.8]</title></circle>
+<circle cx="136.66666666666669" cy="205.86" r="3" fill="#8a8f98"><title>baseline round 3: 6.5% [3.8-10.8]</title></circle>
+<circle cx="177" cy="201.18" r="3" fill="#8a8f98"><title>baseline round 4: 9.5% [6.2-14.4]</title></circle>
+<circle cx="217.33333333333334" cy="197.28" r="3" fill="#8a8f98"><title>baseline round 5: 12.0% [8.2-17.2]</title></circle>
+<circle cx="257.66666666666663" cy="200.4" r="3" fill="#8a8f98"><title>baseline round 6: 10.0% [6.6-14.9]</title></circle>
+<circle cx="298" cy="203.52" r="3" fill="#8a8f98"><title>baseline round 7: 8.0% [5.0-12.6]</title></circle>
+<polygon points="56,189.1212 96.33333333333334,194.5032 136.66666666666669,131.9004 177,117.4392 217.33333333333334,128.0628 257.66666666666663,125.7696 298,115.926 298,137.11079999999998 257.66666666666663,147.1728 217.33333333333334,149.466 177,138.67079999999999 136.66666666666669,153.288 96.33333333333334,206.9988 56,203.208" fill="#d9822b" opacity="0.15"/>
+<polyline points="56,197.28 96.33333333333334,201.96 136.66666666666669,142.68 177,127.86000000000001 217.33333333333334,138.78 257.66666666666663,136.44 298,126.30000000000001" fill="none" stroke="#d9822b" stroke-width="2.2"/>
+<circle cx="56" cy="197.28" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 1: 12.0% [8.2-17.2]</title></circle>
+<circle cx="96.33333333333334" cy="201.96" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 2: 9.0% [5.8-13.8]</title></circle>
+<circle cx="136.66666666666669" cy="142.68" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 3: 47.0% [40.2-53.9]</title></circle>
+<circle cx="177" cy="127.86000000000001" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 4: 56.5% [49.6-63.2]</title></circle>
+<circle cx="217.33333333333334" cy="138.78" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 5: 49.5% [42.6-56.4]</title></circle>
+<circle cx="257.66666666666663" cy="136.44" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 6: 51.0% [44.1-57.8]</title></circle>
+<circle cx="298" cy="126.30000000000001" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 7: 57.5% [50.6-64.1]</title></circle>
+<text x="356" y="50" font-size="12" font-weight="600" fill="#1d2330">rush_open_mid</text>
+<line x1="356" x2="598" y1="216" y2="216" stroke="#e3e6eb"/>
+<text x="350" y="220" text-anchor="end" fill="#5b6270">0%</text>
+<line x1="356" x2="598" y1="177" y2="177" stroke="#e3e6eb"/>
+<text x="350" y="181" text-anchor="end" fill="#5b6270">25%</text>
+<line x1="356" x2="598" y1="138" y2="138" stroke="#e3e6eb"/>
+<text x="350" y="142" text-anchor="end" fill="#5b6270">50%</text>
+<line x1="356" x2="598" y1="99" y2="99" stroke="#e3e6eb"/>
+<text x="350" y="103" text-anchor="end" fill="#5b6270">75%</text>
+<line x1="356" x2="598" y1="60" y2="60" stroke="#e3e6eb"/>
+<text x="350" y="64" text-anchor="end" fill="#5b6270">100%</text>
+<line x1="356" x2="598" y1="138" y2="138" stroke="#9aa1ad" stroke-dasharray="4 3"/>
+<text x="356" y="232" text-anchor="middle" fill="#5b6270">1</text>
+<text x="396.3333333333333" y="232" text-anchor="middle" fill="#5b6270">2</text>
+<text x="436.6666666666667" y="232" text-anchor="middle" fill="#5b6270">3</text>
+<text x="477" y="232" text-anchor="middle" fill="#5b6270">4</text>
+<text x="517.3333333333334" y="232" text-anchor="middle" fill="#5b6270">5</text>
+<text x="557.6666666666666" y="232" text-anchor="middle" fill="#5b6270">6</text>
+<text x="598" y="232" text-anchor="middle" fill="#5b6270">7</text>
+<text x="477" y="246" text-anchor="middle" fill="#5b6270">round</text>
+<polygon points="356,61.216800000000006 396.3333333333333,62.66759999999999 436.6666666666667,60.4212 477,63.1824 517.3333333333334,61.66920000000002 557.6666666666666,61.216800000000006 598,62.66759999999999 598,70.99799999999999 557.6666666666666,67.8468 517.3333333333334,68.92320000000001 477,71.9964 436.6666666666667,65.5692 396.3333333333333,70.99799999999999 356,67.8468" fill="#8a8f98" opacity="0.15"/>
+<polyline points="356,63.120000000000005 396.3333333333333,65.46000000000001 436.6666666666667,61.56 477,66.24000000000001 517.3333333333334,63.900000000000006 557.6666666666666,63.120000000000005 598,65.46000000000001" fill="none" stroke="#8a8f98" stroke-width="2.2"/>
+<circle cx="356" cy="63.120000000000005" r="3" fill="#8a8f98"><title>baseline round 1: 98.0% [95.0-99.2]</title></circle>
+<circle cx="396.3333333333333" cy="65.46000000000001" r="3" fill="#8a8f98"><title>baseline round 2: 96.5% [93.0-98.3]</title></circle>
+<circle cx="436.6666666666667" cy="61.56" r="3" fill="#8a8f98"><title>baseline round 3: 99.0% [96.4-99.7]</title></circle>
+<circle cx="477" cy="66.24000000000001" r="3" fill="#8a8f98"><title>baseline round 4: 96.0% [92.3-98.0]</title></circle>
+<circle cx="517.3333333333334" cy="63.900000000000006" r="3" fill="#8a8f98"><title>baseline round 5: 97.5% [94.3-98.9]</title></circle>
+<circle cx="557.6666666666666" cy="63.120000000000005" r="3" fill="#8a8f98"><title>baseline round 6: 98.0% [95.0-99.2]</title></circle>
+<circle cx="598" cy="65.46000000000001" r="3" fill="#8a8f98"><title>baseline round 7: 96.5% [93.0-98.3]</title></circle>
+<polygon points="356,61.216800000000006 396.3333333333333,62.66759999999999 436.6666666666667,184.722 477,208.1532 517.3333333333334,213.0672 557.6666666666666,213.0672 598,213.0672 598,216 557.6666666666666,216 517.3333333333334,216 477,214.7832 436.6666666666667,199.9476 396.3333333333333,70.99799999999999 356,67.8468" fill="#d9822b" opacity="0.15"/>
+<polyline points="356,63.120000000000005 396.3333333333333,65.46000000000001 436.6666666666667,193.38 477,212.88 517.3333333333334,216 557.6666666666666,216 598,216" fill="none" stroke="#d9822b" stroke-width="2.2"/>
+<circle cx="356" cy="63.120000000000005" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 1: 98.0% [95.0-99.2]</title></circle>
+<circle cx="396.3333333333333" cy="65.46000000000001" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 2: 96.5% [93.0-98.3]</title></circle>
+<circle cx="436.6666666666667" cy="193.38" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 3: 14.5% [10.3-20.1]</title></circle>
+<circle cx="477" cy="212.88" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 4: 2.0% [0.8-5.0]</title></circle>
+<circle cx="517.3333333333334" cy="216" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 5: 0.0% [0.0-1.9]</title></circle>
+<circle cx="557.6666666666666" cy="216" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 6: 0.0% [0.0-1.9]</title></circle>
+<circle cx="598" cy="216" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 7: 0.0% [0.0-1.9]</title></circle>
+<text x="656" y="50" font-size="12" font-weight="600" fill="#1d2330">mixed_random</text>
+<line x1="656" x2="898" y1="216" y2="216" stroke="#e3e6eb"/>
+<text x="650" y="220" text-anchor="end" fill="#5b6270">0%</text>
+<line x1="656" x2="898" y1="177" y2="177" stroke="#e3e6eb"/>
+<text x="650" y="181" text-anchor="end" fill="#5b6270">25%</text>
+<line x1="656" x2="898" y1="138" y2="138" stroke="#e3e6eb"/>
+<text x="650" y="142" text-anchor="end" fill="#5b6270">50%</text>
+<line x1="656" x2="898" y1="99" y2="99" stroke="#e3e6eb"/>
+<text x="650" y="103" text-anchor="end" fill="#5b6270">75%</text>
+<line x1="656" x2="898" y1="60" y2="60" stroke="#e3e6eb"/>
+<text x="650" y="64" text-anchor="end" fill="#5b6270">100%</text>
+<line x1="656" x2="898" y1="138" y2="138" stroke="#9aa1ad" stroke-dasharray="4 3"/>
+<text x="656" y="232" text-anchor="middle" fill="#5b6270">1</text>
+<text x="696.3333333333334" y="232" text-anchor="middle" fill="#5b6270">2</text>
+<text x="736.6666666666666" y="232" text-anchor="middle" fill="#5b6270">3</text>
+<text x="777" y="232" text-anchor="middle" fill="#5b6270">4</text>
+<text x="817.3333333333334" y="232" text-anchor="middle" fill="#5b6270">5</text>
+<text x="857.6666666666666" y="232" text-anchor="middle" fill="#5b6270">6</text>
+<text x="898" y="232" text-anchor="middle" fill="#5b6270">7</text>
+<text x="777" y="246" text-anchor="middle" fill="#5b6270">round</text>
+<polygon points="656,168.62279999999998 696.3333333333334,162.0396 736.6666666666666,164.4888 777,160.4016 817.3333333333334,160.4016 857.6666666666666,165.3156 898,173.6304 898,191.1492 857.6666666666666,184.1604 817.3333333333334,179.886 777,179.886 736.6666666666666,183.4428 696.3333333333334,181.3056 656,186.9684" fill="#8a8f98" opacity="0.15"/>
+<polyline points="656,178.56 696.3333333333334,172.32 736.6666666666666,174.66 777,170.76 817.3333333333334,170.76 857.6666666666666,175.44 898,183.24" fill="none" stroke="#8a8f98" stroke-width="2.2"/>
+<circle cx="656" cy="178.56" r="3" fill="#8a8f98"><title>baseline round 1: 24.0% [18.6-30.4]</title></circle>
+<circle cx="696.3333333333334" cy="172.32" r="3" fill="#8a8f98"><title>baseline round 2: 28.0% [22.2-34.6]</title></circle>
+<circle cx="736.6666666666666" cy="174.66" r="3" fill="#8a8f98"><title>baseline round 3: 26.5% [20.9-33.0]</title></circle>
+<circle cx="777" cy="170.76" r="3" fill="#8a8f98"><title>baseline round 4: 29.0% [23.2-35.6]</title></circle>
+<circle cx="817.3333333333334" cy="170.76" r="3" fill="#8a8f98"><title>baseline round 5: 29.0% [23.2-35.6]</title></circle>
+<circle cx="857.6666666666666" cy="175.44" r="3" fill="#8a8f98"><title>baseline round 6: 26.0% [20.4-32.5]</title></circle>
+<circle cx="898" cy="183.24" r="3" fill="#8a8f98"><title>baseline round 7: 21.0% [15.9-27.2]</title></circle>
+<polygon points="656,168.62279999999998 696.3333333333334,162.0396 736.6666666666666,163.6776 777,160.4016 817.3333333333334,164.4888 857.6666666666666,165.3156 898,166.9692 898,185.5644 857.6666666666666,184.1604 817.3333333333334,183.4428 777,179.886 736.6666666666666,182.7408 696.3333333333334,181.3056 656,186.9684" fill="#d9822b" opacity="0.15"/>
+<polyline points="656,178.56 696.3333333333334,172.32 736.6666666666666,173.88 777,170.76 817.3333333333334,174.66 857.6666666666666,175.44 898,177" fill="none" stroke="#d9822b" stroke-width="2.2"/>
+<circle cx="656" cy="178.56" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 1: 24.0% [18.6-30.4]</title></circle>
+<circle cx="696.3333333333334" cy="172.32" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 2: 28.0% [22.2-34.6]</title></circle>
+<circle cx="736.6666666666666" cy="173.88" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 3: 27.0% [21.3-33.5]</title></circle>
+<circle cx="777" cy="170.76" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 4: 29.0% [23.2-35.6]</title></circle>
+<circle cx="817.3333333333334" cy="174.66" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 5: 26.5% [20.9-33.0]</title></circle>
+<circle cx="857.6666666666666" cy="175.44" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 6: 26.0% [20.4-32.5]</title></circle>
+<circle cx="898" cy="177" r="3" fill="#d9822b"><title>adaptive (offline stand-in) round 7: 25.0% [19.5-31.4]</title></circle>
+<rect x="12" y="278" width="14" height="4" fill="#8a8f98"/><text x="32" y="283" fill="#1d2330">baseline</text>
+<rect x="91.6" y="278" width="14" height="4" fill="#d9822b"/><text x="111.6" y="283" fill="#1d2330">adaptive (offline stand-in)</text>
+</svg>
